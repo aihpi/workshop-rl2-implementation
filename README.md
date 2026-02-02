@@ -1,6 +1,6 @@
 <div style="background-color: #ffffff; color: #000000; padding: 10px;">
 <img src="00_aisc\img\logo_aisc_bmftr.jpg">
-<h1> Your title.
+<h1> Workshop: Reinforcement Learning II - Implementation </h1>
 </div>
 
 Your Project Description with a nice image

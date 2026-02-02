@@ -192,3 +192,29 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+#### Workshop Specific Ignores ####
+
+# RL training artifacts
+logs/
+tensorboard_logs/
+*.zip
+models/
+checkpoints/
+
+# Trained models (SB3 saves as .zip)
+*_model.zip
+
+# Workshop outputs
+outputs/
+results/
+
+# Large data files (keep .npy in 03_data/ but ignore generated elsewhere)
+*.npy
+!03_data/*.npy
+
+# Jupyter runtime
+.jupyter/
+
+# macOS
+.DS_Store
