@@ -29,7 +29,8 @@ class TestBatteryEnvSolution:
 
     def test_observation_space_shape(self, env):
         """Test observation space has correct shape."""
-        expected_dim = 3 + 2 * env.forecast_horizon
+        # obs = [soc, hour_of_day, price_0, load_0, price_1, load_1, ...]
+        expected_dim = 4 + 2 * env.forecast_horizon
         assert env.observation_space.shape == (expected_dim,)
 
     def test_action_space_shape(self, env):
@@ -164,6 +165,18 @@ class TestBatteryEnvSolution:
         # Reward should be negative (cost is positive)
         assert reward < 0
 
+    def test_reward_cannot_be_positive(self, env):
+        """Test that reward can't be positive (can't sell back to grid)."""
+        env.reset(seed=42)
+
+        # Full battery, max discharge should not give positive reward
+        env.soc = env.capacity
+        action = np.array([-1.0], dtype=np.float32)  # Max discharge
+        _, reward, _, _, _ = env.step(action)
+
+        # Reward should be <= 0 (can offset load to zero cost, but can't profit)
+        assert reward <= 0
+
     def test_info_dict_contents(self, env):
         """Test that info dict contains expected keys."""
         obs, info = env.reset(seed=42)
@@ -178,8 +191,9 @@ class TestBatteryEnvSolution:
         env1 = BatteryStorageEnv(forecast_horizon=2)
         env2 = BatteryStorageEnv(forecast_horizon=6)
 
-        assert env1.observation_space.shape[0] == 3 + 2 * 2  # 7
-        assert env2.observation_space.shape[0] == 3 + 2 * 6  # 15
+        # obs = [soc, hour_of_day, price_0, load_0, ...]
+        assert env1.observation_space.shape[0] == 4 + 2 * 2  # 8
+        assert env2.observation_space.shape[0] == 4 + 2 * 6  # 16
 
         env1.close()
         env2.close()

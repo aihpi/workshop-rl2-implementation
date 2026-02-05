@@ -29,24 +29,30 @@ class BatteryStorageEnv(gym.Env):
 
     Observation Space:
         Box([0]*obs_dim, [1]*obs_dim, float32)
-        [soc_norm, price_norm, load_norm, forecast_price_1, forecast_load_1, ...]
+        [soc_norm, hour_of_day, price_norm, load_norm, forecast_price_1, forecast_load_1, ...]
         All values normalized to [0, 1]
 
     Reward:
         Negative cost of grid energy: -(grid_energy * price)
-        grid_energy = load + charge_energy (positive = buying from grid)
+        grid_energy = max(0, load + charge_energy)
+        Note: Can't sell back to grid, only offset own consumption.
     """
 
     metadata = {"render_modes": []}
+
+    # Default train/eval split: 130 weeks for training, 26 weeks for evaluation
+    TRAIN_WEEKS = (0, 130)  # ~2.5 years
+    EVAL_WEEKS = (130, 156)  # ~6 months
 
     def __init__(
         self,
         data_path: str | Path | None = None,
         capacity: float = 10.0,
-        max_charge_rate: float = 5.0,
+        max_charge_rate: float = 2.0,
         efficiency: float = 1.0,
         forecast_horizon: int = 4,
         enable_degradation: bool = False,
+        week_range: tuple[int, int] | None = None,
     ):
         """
         Initialize the battery storage environment.
@@ -59,6 +65,8 @@ class BatteryStorageEnv(gym.Env):
             efficiency: Round-trip efficiency (1.0 = 100%, no losses).
             forecast_horizon: Number of future steps to include in observation.
             enable_degradation: If True, enables battery degradation (Level 2).
+            week_range: Tuple of (start, end) week indices to use. If None, uses all weeks.
+                       Use TRAIN_WEEKS for training, EVAL_WEEKS for evaluation.
         """
         super().__init__()
 
@@ -75,6 +83,14 @@ class BatteryStorageEnv(gym.Env):
         # Load data and compute normalization constants
         self._load_data(data_path)
 
+        # Set available weeks (for train/eval split)
+        if week_range is None:
+            self.week_start = 0
+            self.week_end = self.n_weeks
+        else:
+            self.week_start = week_range[0]
+            self.week_end = min(week_range[1], self.n_weeks)
+
         # Define action space: continuous [-1, 1]
         # -1 = max discharge, +1 = max charge
         self.action_space = spaces.Box(
@@ -82,8 +98,8 @@ class BatteryStorageEnv(gym.Env):
         )
 
         # Define observation space: all normalized to [0, 1]
-        # [soc, price, load, forecast_price_1, forecast_load_1, ...]
-        obs_dim = 3 + 2 * forecast_horizon
+        # [soc, hour_of_day, price, load, forecast_price_1, forecast_load_1, ...]
+        obs_dim = 4 + 2 * forecast_horizon
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32
         )
@@ -129,12 +145,14 @@ class BatteryStorageEnv(gym.Env):
         Returns:
             Dictionary with current state information for debugging.
         """
+        # Safe index for terminal state (step 168 -> use index 167)
+        idx = min(self.current_step, self.episode_length - 1)
         return {
             "soc": self.soc,
             "step": self.current_step,
             "week": self.week_idx,
-            "price": self._current_prices[self.current_step],
-            "load": self._current_loads[self.current_step],
+            "price": self._current_prices[idx],
+            "load": self._current_loads[idx],
             "health": self.health,
         }
 
@@ -204,7 +222,7 @@ class BatteryStorageEnv(gym.Env):
         Build the observation array for the current state.
 
         Returns:
-            np.ndarray: Observation array of shape (3 + 2*forecast_horizon,)
+            np.ndarray: Observation array of shape (4 + 2*forecast_horizon,)
                        with dtype float32, all values in [0, 1]
         """
         obs = []
@@ -212,6 +230,10 @@ class BatteryStorageEnv(gym.Env):
         # Current state of charge (normalized)
         soc_norm = self.soc / self.capacity
         obs.append(soc_norm)
+
+        # Hour of day (normalized to [0, 1])
+        hour_of_day = (self.current_step % 24) / 24.0
+        obs.append(hour_of_day)
 
         # Current and forecast values
         for h in range(self.forecast_horizon + 1):
@@ -232,6 +254,9 @@ class BatteryStorageEnv(gym.Env):
         """
         # Grid energy = load + charging (discharge is negative, reduces grid draw)
         grid_energy = load + charge_power
+
+        # Can't sell back to grid - only offset own consumption
+        grid_energy = max(grid_energy, 0.0)
 
         # Cost = energy * price
         cost = grid_energy * price
@@ -255,8 +280,8 @@ class BatteryStorageEnv(gym.Env):
         # Initialize RNG (must be first!)
         super().reset(seed=seed)
 
-        # Select random week
-        self.week_idx = self.np_random.integers(0, self.n_weeks)
+        # Select random week from available range
+        self.week_idx = self.np_random.integers(self.week_start, self.week_end)
 
         # Store episode data
         self._current_prices = self.prices[self.week_idx].copy()
@@ -285,37 +310,27 @@ class BatteryStorageEnv(gym.Env):
         # Extract and clip action
         action_value = float(np.clip(action[0], -1.0, 1.0))
 
-        # Convert action to power
+        # Convert action to charge power (kW, positive=charging, negative=discharging)
         charge_power = action_value * self.max_charge_rate
+
+        # Calculate new SoC and clip to valid range [0, capacity]
+        new_soc = np.clip(self.soc + charge_power, 0, self.capacity)
+
+        # Calculate actual charge power (after constraints)
+        actual_charge_power = new_soc - self.soc
+
+        # Update state of charge
+        self.soc = new_soc
 
         # Get current price and load
         price = self._current_prices[self.current_step]
         load = self._current_loads[self.current_step]
 
-        # Apply battery constraints
-        if charge_power > 0:
-            # Charging: can't exceed capacity
-            max_charge = (self.capacity - self.soc) / self.efficiency
-            charge_power = min(charge_power, max_charge)
-        else:
-            # Discharging: can't go below 0
-            max_discharge = -self.soc * self.efficiency
-            charge_power = max(charge_power, max_discharge)
-
-        # Update state of charge
-        if charge_power > 0:
-            self.soc += charge_power * self.efficiency
-        else:
-            self.soc += charge_power / self.efficiency
-
-        # Ensure SoC stays in bounds (numerical safety)
-        self.soc = np.clip(self.soc, 0, self.capacity)
-
-        # Calculate reward
-        reward = self._calculate_reward(load, charge_power, price)
+        # Calculate reward (using actual charge power after constraints)
+        reward = self._calculate_reward(load, actual_charge_power, price)
 
         # Apply degradation (Level 2)
-        self._apply_degradation(charge_power)
+        self._apply_degradation(actual_charge_power)
 
         # Advance time
         self.current_step += 1
@@ -324,17 +339,4 @@ class BatteryStorageEnv(gym.Env):
         terminated = self.current_step >= self.episode_length
         truncated = False
 
-        # Get observation and info
-        # Note: _get_obs and _get_info use current_step, which has been incremented
-        # For terminal state, we need to handle edge case
-        if terminated:
-            # At termination, return last valid observation
-            self.current_step = self.episode_length - 1
-            obs = self._get_obs()
-            info = self._get_info()
-            self.current_step = self.episode_length  # Restore for consistency
-        else:
-            obs = self._get_obs()
-            info = self._get_info()
-
-        return obs, reward, terminated, truncated, info
+        return self._get_obs(), reward, terminated, truncated, self._get_info()
