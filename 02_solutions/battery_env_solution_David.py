@@ -56,7 +56,7 @@ class BatteryStorageEnv(gym.Env):
         capacity: float = 10.0,
         max_charge_rate: float = 5.0,
         efficiency: float = 1.0,
-        forecast_horizon: int = 4,
+        forecast_horizon: int = 4, 
         enable_degradation: bool = False,
         week_range: tuple[int, int] | None = None,
     ):
@@ -80,6 +80,9 @@ class BatteryStorageEnv(gym.Env):
         self.capacity = capacity
         self.max_charge_rate = max_charge_rate
         self.efficiency = efficiency
+        # make sure forecast_horizon is non-negative
+        if forecast_horizon < 0:
+            raise ValueError("forecast_horizon must be non-negative integer")
         self.forecast_horizon = forecast_horizon
         self.enable_degradation = enable_degradation
 
@@ -131,7 +134,7 @@ class BatteryStorageEnv(gym.Env):
         """
         if data_path is None:
             # Default path: relative to this file
-            data_path = Path(__file__).parent.parent.parent / "03_data"
+            data_path = Path(__file__).parent.parent / "03_data"
         else:
             data_path = Path(data_path)
 
@@ -178,12 +181,12 @@ class BatteryStorageEnv(gym.Env):
         # Clamp index to valid range
         future_idx = min(self.current_step + horizon, self.episode_length - 1)
 
-        # Noise increases with horizon: 5% per step ahead
-        noise_std = 0.05 * horizon
-
         # Get normalized values
         price = self._current_prices[future_idx] / self.price_max
         load = self._current_loads[future_idx] / self.load_max
+
+        # Noise increases with horizon: 5% per step ahead
+        noise_std = 0.05 * horizon
 
         # Add noise for future forecasts
         if horizon > 0:
@@ -214,6 +217,45 @@ class BatteryStorageEnv(gym.Env):
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
     # =========================================================================
+    def _get_obs(self) -> np.ndarray:
+        """
+        Build the observation array for the current state.
+
+        The observation should contain:
+        1. Normalized state of charge: soc / capacity
+        2. Hour of day: (current_step % 24) / 24.0
+        3. Normalized current price: from _get_forecast(0)
+        4. Normalized current load: from _get_forecast(0)
+        5. Forecast values: for h in 1..forecast_horizon:
+           - forecast_price_h from _get_forecast(h)
+           - forecast_load_h from _get_forecast(h)
+
+        Returns:
+            np.ndarray: Observation array of shape (4 + 2*forecast_horizon,)
+                       with dtype float32, all values in [0, 1]
+
+        Hints:
+            - Use self._get_forecast(h) to get (price, load) tuple for step h
+            - self.soc is current state of charge in kWh
+            - self.capacity is maximum capacity in kWh
+            - self.current_step % 24 gives hour of day (0-23)
+            - self.forecast_horizon tells you how many future steps to include
+            - Return type must be np.float32 for Gymnasium compatibility
+
+        Example structure for forecast_horizon=2:
+            [soc_norm, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
+        """
+        # Normalize state of charge and hour of day
+        soc_norm = self.soc / self.capacity
+        hour_norm = (self.current_step % 24) / 24.0
+        obs = [soc_norm, hour_norm]
+
+        # add current price and load (horizon=0) and future forecasts
+        for h in range(self.forecast_horizon + 1): 
+            price_h, load_h = self._get_forecast(h)
+            obs.extend([price_h, load_h])
+
+        return np.array(obs, dtype=np.float32)
 
     def reset(
         self,
@@ -249,7 +291,26 @@ class BatteryStorageEnv(gym.Env):
             - self.prices has shape (n_weeks, 168)
             - Use self.week_start and self.week_end for the available week range
         """
-        raise NotImplementedError("Implement this method")
+        # IMPORTANT: Must call this first to seed the random number generator
+        super().reset(seed=seed)
+
+        # select a random episode index from available data
+        self.week_idx = self.np_random.integers(self.week_start, self.week_end)
+
+        # load the prices of the specific episode
+        self._current_prices = self.prices[self.week_idx]
+        self._current_loads = self.loads[self.week_idx]
+
+        # initialize soc to random value
+        self.soc = self.np_random.uniform(0, self.capacity)
+
+        # reset current step to 0
+        self.current_step = 0
+
+        # reset health
+        self.health = 1.0
+
+        return self._get_obs(), self._get_info()
 
     def step(
         self, action: np.ndarray
@@ -258,19 +319,18 @@ class BatteryStorageEnv(gym.Env):
         Execute one step in the environment.
 
         Steps to implement:
-        1. Extract action value and clip to [-1, 1]
-        2. Convert action to charge power: power = action * max_charge_rate
-        3. Get current price and load from episode data
-        4. Apply battery constraints:
+        1. Convert action to charge power: power = action * max_charge_rate
+        2. Get current price and load from episode data
+        3. Apply battery constraints:
            - Can't charge above capacity
            - Can't discharge below 0
            - Adjust charge_power if needed
-        5. Update state of charge: soc += charge_power * efficiency
+        4. Update state of charge: soc += charge_power * efficiency
            (For discharge, efficiency loss: soc += charge_power / efficiency)
-        6. Calculate reward using self._calculate_reward()
-        7. Optionally apply degradation via self._apply_degradation()
-        8. Increment current_step
-        9. Check if episode is done (current_step >= episode_length)
+        5. Calculate reward using self._calculate_reward()
+        6. Optionally apply degradation via self._apply_degradation()
+        7. Increment current_step
+        8. Check if episode is done (current_step >= episode_length)
 
         Args:
             action: Action array of shape (1,) with value in [-1, 1]
@@ -286,14 +346,33 @@ class BatteryStorageEnv(gym.Env):
             - action[0] or float(action[0]) extracts the scalar value
             - np.clip(value, low, high) constrains a value to a range
             - For charging: new_soc = soc + power * efficiency
-            - For discharging: new_soc = soc + power / efficiency
-              (power is negative when discharging)
             - Simpler: if efficiency=1.0, just do soc += power
             - self._current_prices[self.current_step] gives current price
             - self._current_loads[self.current_step] gives current load
             - terminated = (self.current_step >= self.episode_length)
         """
-        raise NotImplementedError("Implement this method")
+        action = action[0] # extract scalar value of action array
+        charge_power = action * self.max_charge_rate
+        new_soc = np.clip(self.soc + charge_power, 0, self.capacity)
+
+        # current price and load
+        current_price = self._current_prices[self.current_step]
+        current_load = self._current_loads[self.current_step]
+
+        # calculate effective power
+        charge_power_effective = new_soc - self.soc
+
+        reward = self._calculate_reward(current_load,charge_power_effective, current_price)
+
+        self._apply_degradation(charge_power_effective)
+
+        # increment current step and update soc
+        self.soc = new_soc
+        self.current_step += 1
+        terminated = self.current_step >= self.episode_length
+        truncated = False
+
+        return self._get_obs(), reward, terminated, truncated, self._get_info()
 
     def _calculate_reward(
         self, load: float, charge_power: float, price: float
@@ -325,7 +404,9 @@ class BatteryStorageEnv(gym.Env):
             - cost = grid_energy * price
             - reward should be negative (we want to minimize cost)
         """
-        raise NotImplementedError("Implement this method")
+        grid_energy = max(load + charge_power, 0)  # Can't sell to grid
+        cost = grid_energy * price
+        return - cost
 
     def render(self) -> None:
         """Render the environment (not implemented)."""
@@ -335,32 +416,3 @@ class BatteryStorageEnv(gym.Env):
         """Clean up resources (not implemented)."""
         pass
 
-    def _get_obs(self) -> np.ndarray:
-        """
-        Build the observation array for the current state.
-
-        The observation should contain:
-        1. Normalized state of charge: soc / capacity
-        2. Hour of day: (current_step % 24) / 24.0
-        3. Normalized current price: from _get_forecast(0)
-        4. Normalized current load: from _get_forecast(0)
-        5. Forecast values: for h in 1..forecast_horizon:
-           - forecast_price_h from _get_forecast(h)
-           - forecast_load_h from _get_forecast(h)
-
-        Returns:
-            np.ndarray: Observation array of shape (4 + 2*forecast_horizon,)
-                       with dtype float32, all values in [0, 1]
-
-        Hints:
-            - Use self._get_forecast(h) to get (price, load) tuple for step h
-            - self.soc is current state of charge in kWh
-            - self.capacity is maximum capacity in kWh
-            - self.current_step % 24 gives hour of day (0-23)
-            - self.forecast_horizon tells you how many future steps to include
-            - Return type must be np.float32 for Gymnasium compatibility
-
-        Example structure for forecast_horizon=2:
-            [soc_norm, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
-        """
-        raise NotImplementedError("Implement this method")
