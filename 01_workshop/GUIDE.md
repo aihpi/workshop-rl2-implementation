@@ -14,7 +14,7 @@ Build a **Gymnasium environment** that simulates this problem so that an RL agen
 
 The environment should:
 
-- Simulate one week (168 hours) per episode
+- Simulate episodes of configurable length (default: 168 hours = 1 week)
 - Let the agent decide each hour how much to charge or discharge
 - Reward the agent for reducing electricity costs compared to having no battery
 
@@ -22,19 +22,18 @@ Once the environment works, we can train a PPO agent on it and see if it learns 
 
 ## The Data
 
-You have **3 years of hourly data** stored as NumPy arrays:
+You have **~3 years of hourly data** stored as flat NumPy arrays:
 
 | File | Shape | Description |
 |------|-------|-------------|
-| `prices.npy` | (156, 168) | Electricity price per hour (EUR/kWh) |
-| `loads.npy` | (156, 168) | Household consumption per hour (kWh) |
+| `prices.npy` | (26208,) | Electricity price per hour (EUR/kWh) |
+| `loads.npy` | (26208,) | Household consumption per hour (kWh) |
 
-- **156 weeks**, each with **168 hours** (7 days x 24 hours)
-- Row `i` contains all hourly values for week `i`
+- Flat 1D timeseries — one value per hour
 - Prices show daily patterns (cheap at night, expensive in evening) and seasonal variation
 - Loads follow household routines (low at night, peaks at morning and evening)
 
-The first 130 weeks are used for **training**, the remaining 26 weeks for **evaluation**. This prevents the agent from memorizing specific weeks.
+The environment chunks this data into episodes of `episode_length` hours. For the default (168 hours), this gives 156 episodes. The first ~83% are used for **training**, the rest for **evaluation**. This prevents the agent from memorizing specific episodes.
 
 Explore the data in `00_explore_data.ipynb` before building the environment.
 
@@ -111,10 +110,10 @@ Note: The household load is always fully satisfied. The battery doesn't "power t
 
 ### Episode Structure
 
-- Each episode is **one week** (168 hourly steps)
-- At the start of each episode, a random week is selected from the dataset
+- Each episode is **configurable in length** (default: 168 hourly steps = 1 week)
+- At the start of each episode, a random episode is selected from the available data split
 - The battery starts with a random charge level
-- The episode ends after 168 steps (no early termination)
+- The episode ends after `episode_length` steps (no early termination)
 
 ## Your Task
 
@@ -144,7 +143,7 @@ Think about: what is the household's electricity bill this hour? How does the ba
 
 **3. Reset (`reset`)**
 
-Set up a fresh episode. Pick a random week of data, initialize the battery, and return the first observation. This is called at the start of every training episode.
+Set up a fresh episode. Pick a random episode of data, initialize the battery, and return the first observation. This is called at the start of every training episode.
 
 Remember to call `super().reset(seed=seed)` first for proper random number handling.
 
@@ -172,6 +171,8 @@ Once you have all 4 methods implemented, run the test suite:
 uv run pytest tests/test_battery_env.py -v
 ```
 
+Or open `01_run_tests.ipynb` in the notebooks folder to run the tests from a notebook.
+
 The tests check that your environment:
 - Has the correct observation and action spaces
 - Returns valid observations within bounds
@@ -182,7 +183,7 @@ The tests check that your environment:
 
 ## What Comes Next
 
-Once the tests pass, open `01_explore_environment.ipynb` to:
+Once the tests pass, open `02_explore_environment.ipynb` to:
 
 1. Compare baseline policies (random, always charge, do nothing, simple heuristic)
 2. Train a PPO agent using Stable-Baselines3

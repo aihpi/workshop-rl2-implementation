@@ -20,7 +20,7 @@ class BatteryStorageEnv(gym.Env):
     The agent controls a battery system to minimize electricity costs by
     charging when prices are low and discharging when prices are high.
 
-    Episode: 168 steps (1 week, hourly resolution)
+    Episode: configurable length (default 168 steps = 1 week, hourly resolution)
 
     Action Space:
         Box([-1], [1], float32)
@@ -40,10 +40,6 @@ class BatteryStorageEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    # Default train/eval split: 130 weeks for training, 26 weeks for evaluation
-    TRAIN_WEEKS = (0, 130)  # ~2.5 years
-    EVAL_WEEKS = (130, 156)  # ~6 months
-
     def __init__(
         self,
         data_path: str | Path | None = None,
@@ -52,7 +48,9 @@ class BatteryStorageEnv(gym.Env):
         efficiency: float = 1.0,
         forecast_horizon: int = 4,
         enable_degradation: bool = False,
-        week_range: tuple[int, int] | None = None,
+        episode_length: int = 168,
+        split: str = "train",
+        train_fraction: float = 0.83,
     ):
         """
         Initialize the battery storage environment.
@@ -65,8 +63,10 @@ class BatteryStorageEnv(gym.Env):
             efficiency: Round-trip efficiency (1.0 = 100%, no losses).
             forecast_horizon: Number of future steps to include in observation.
             enable_degradation: If True, enables battery degradation (Level 2).
-            week_range: Tuple of (start, end) week indices to use. If None, uses all weeks.
-                       Use TRAIN_WEEKS for training, EVAL_WEEKS for evaluation.
+            episode_length: Number of hourly steps per episode (default: 168 = 1 week).
+            split: Which data split to use: "train" (default), "eval", or "all".
+            train_fraction: Fraction of episodes used for training (default: 0.83).
+                           The remaining fraction is used for evaluation.
         """
         super().__init__()
 
@@ -78,18 +78,21 @@ class BatteryStorageEnv(gym.Env):
         self.enable_degradation = enable_degradation
 
         # Episode parameters
-        self.episode_length = 168  # 1 week in hours
+        self.episode_length = episode_length
 
-        # Load data and compute normalization constants
+        # Load data and chunk into episodes
         self._load_data(data_path)
 
-        # Set available weeks (for train/eval split)
-        if week_range is None:
-            self.week_start = 0
-            self.week_end = self.n_weeks
+        # Set available episode range based on split
+        split_idx = int(self.n_episodes * train_fraction)
+        if split == "train":
+            self._available_episodes = (0, split_idx)
+        elif split == "eval":
+            self._available_episodes = (split_idx, self.n_episodes)
+        elif split == "all":
+            self._available_episodes = (0, self.n_episodes)
         else:
-            self.week_start = week_range[0]
-            self.week_end = min(week_range[1], self.n_weeks)
+            raise ValueError(f"split must be 'train', 'eval', or 'all', got '{split}'")
 
         # Define action space: continuous [-1, 1]
         # -1 = max discharge, +1 = max charge
@@ -107,19 +110,23 @@ class BatteryStorageEnv(gym.Env):
         # State variables (initialized in reset)
         self.soc: float = 0.0
         self.current_step: int = 0
-        self.week_idx: int = 0
+        self.episode_idx: int = 0
         self._current_prices: np.ndarray = np.zeros(self.episode_length)
         self._current_loads: np.ndarray = np.zeros(self.episode_length)
         self.health: float = 1.0  # Battery health for degradation (Level 2)
 
     def _load_data(self, data_path: str | Path | None) -> None:
         """
-        Load price and load data from .npy files.
+        Load price and load data from .npy files and chunk into episodes.
+
+        The raw data is a flat 1D timeseries. This method chunks it into
+        episodes of length self.episode_length, discarding any leftover hours
+        that don't fill a complete episode.
 
         Sets:
-            self.prices: Shape (n_weeks, 168) - all price data
-            self.loads: Shape (n_weeks, 168) - all load data
-            self.n_weeks: Number of available weeks
+            self.prices: Shape (n_episodes, episode_length) - chunked price data
+            self.loads: Shape (n_episodes, episode_length) - chunked load data
+            self.n_episodes: Number of complete episodes available
             self.price_max: Maximum price for normalization
             self.load_max: Maximum load for normalization
         """
@@ -129,12 +136,16 @@ class BatteryStorageEnv(gym.Env):
         else:
             data_path = Path(data_path)
 
-        self.prices = np.load(data_path / "prices.npy")
-        self.loads = np.load(data_path / "loads.npy")
+        prices_raw = np.load(data_path / "prices.npy").flatten()
+        loads_raw = np.load(data_path / "loads.npy").flatten()
 
-        self.n_weeks = self.prices.shape[0]
+        # Chunk into episodes, discarding incomplete trailing hours
+        n_usable = (len(prices_raw) // self.episode_length) * self.episode_length
+        self.prices = prices_raw[:n_usable].reshape(-1, self.episode_length)
+        self.loads = loads_raw[:n_usable].reshape(-1, self.episode_length)
+        self.n_episodes = self.prices.shape[0]
 
-        # Compute normalization constants
+        # Compute normalization constants from usable data only
         self.price_max = self.prices.max()
         self.load_max = self.loads.max()
 
@@ -145,12 +156,12 @@ class BatteryStorageEnv(gym.Env):
         Returns:
             Dictionary with current state information for debugging.
         """
-        # Safe index for terminal state (step 168 -> use index 167)
+        # Safe index for terminal state (at episode_length -> use last valid index)
         idx = min(self.current_step, self.episode_length - 1)
         return {
             "soc": self.soc,
             "step": self.current_step,
-            "week": self.week_idx,
+            "episode_idx": self.episode_idx,
             "price": self._current_prices[idx],
             "load": self._current_loads[idx],
             "health": self.health,
@@ -280,12 +291,12 @@ class BatteryStorageEnv(gym.Env):
         # Initialize RNG (must be first!)
         super().reset(seed=seed)
 
-        # Select random week from available range
-        self.week_idx = self.np_random.integers(self.week_start, self.week_end)
+        # Select random episode from available range
+        self.episode_idx = self.np_random.integers(*self._available_episodes)
 
         # Store episode data
-        self._current_prices = self.prices[self.week_idx].copy()
-        self._current_loads = self.loads[self.week_idx].copy()
+        self._current_prices = self.prices[self.episode_idx].copy()
+        self._current_loads = self.loads[self.episode_idx].copy()
 
         # Initialize state
         self.soc = self.np_random.uniform(0, self.capacity)
