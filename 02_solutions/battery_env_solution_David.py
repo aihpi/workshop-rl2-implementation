@@ -50,7 +50,7 @@ class BatteryStorageEnv(gym.Env):
         self,
         data_path: str | Path | None = None,
         capacity: float = 10.0,
-        max_charge_rate: float = 5.0,
+        max_charge_rate: float = 2.5,
         efficiency: float = 1.0,
         forecast_horizon: int = 4,
         enable_degradation: bool = False,

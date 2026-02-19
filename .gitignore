@@ -221,3 +221,6 @@ results/
 
 # macOS
 .DS_Store
+
+# figures folder in notebooks
+01_workshop/notebooks/figures/
