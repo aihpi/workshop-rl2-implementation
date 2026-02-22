@@ -49,7 +49,7 @@ def _generate_autocorrelated_noise(n_hours: int, scale: float, alpha: float, rng
     return noise
 
 
-def generate_price_profile(n_hours: int = 26208, seed: int = 42, autocorr: float = 0.7) -> np.ndarray:
+def generate_price_profile(n_hours: int = 87600, seed: int = 42, autocorr: float = 0.7) -> np.ndarray:
     """
     Generate electricity price profile (EUR/kWh) as continuous timeseries.
 
@@ -62,7 +62,7 @@ def generate_price_profile(n_hours: int = 26208, seed: int = 42, autocorr: float
         Night (22-23):  0.10-0.15   0.12-0.18
 
     Args:
-        n_hours: Number of hours to generate (default: 26208 = 3 years).
+        n_hours: Number of hours to generate (default: 87600 = 10 years).
         seed: Random seed for reproducibility.
         autocorr: Autocorrelation coefficient (0-1). Higher = smoother transitions.
 
@@ -99,7 +99,7 @@ def generate_price_profile(n_hours: int = 26208, seed: int = 42, autocorr: float
     return prices
 
 
-def generate_load_profile(n_hours: int = 26208, seed: int = 43, autocorr: float = 0.8) -> np.ndarray:
+def generate_load_profile(n_hours: int = 87600, seed: int = 43, autocorr: float = 0.8) -> np.ndarray:
     """
     Generate household load profile (kWh per hour) as continuous timeseries.
 
@@ -112,7 +112,7 @@ def generate_load_profile(n_hours: int = 26208, seed: int = 43, autocorr: float 
         Night (22-23):  0.4-0.6     0.5-0.8
 
     Args:
-        n_hours: Number of hours to generate (default: 26208 = 3 years).
+        n_hours: Number of hours to generate (default: 87600 = 10 years).
         seed: Random seed for reproducibility.
         autocorr: Autocorrelation coefficient (0-1). Higher = smoother transitions.
 
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     data_dir = Path(__file__).parent.parent / "03_data"
-    n_hours = 26208  # 3 years * 52 weeks/year * 168 hours/week = 26208 hours
+    n_hours = 87600  # 10 years * 12 months/year * 730h/months = 87600 hours
 
     # Generate data
     print(f"Generating {n_hours} hours ({n_hours / 8760:.1f} years) of data...")
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     loads = generate_load_profile(n_hours=n_hours)
     print(f"  Shape: {loads.shape}")
     print(f"  Range: {loads.min():.3f} - {loads.max():.3f} kWh")
-    print(f"  Total consumption: {loads.sum():.0f} kWh ({loads.sum() / 3:.0f} kWh/year)")
+    print(f"  Total consumption: {loads.sum():.0f} kWh ({loads.sum() / 10:.0f} kWh/year)")
 
     # Save data
     print("\nSaving data...")
@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
     # Plot sample episode
     print("\nPlotting sample episode...")
-    start_hour = 25 * 168
+    start_hour = 0  # You can change this to plot a different episode (e.g., start_hour=8760 for year 2)
     fig = plot_episode(prices, loads, start_hour=start_hour)
     plt.savefig(data_dir / "episode_preview.png", dpi=100)
     print(f"  Saved: episode_preview.png")

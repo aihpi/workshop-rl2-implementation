@@ -21,7 +21,7 @@ class TestBatteryEnv:
 
     def test_observation_space_shape(self, env):
         """Test observation space has correct shape."""
-        expected_dim = 4 + 2 * env.forecast_horizon
+        expected_dim = 5 + 2 * env.forecast_horizon
         assert env.observation_space.shape == (expected_dim,)
 
     def test_action_space_shape(self, env):
@@ -167,8 +167,8 @@ class TestBatteryEnv:
         env1 = env_cls(forecast_horizon=2)
         env2 = env_cls(forecast_horizon=6)
 
-        assert env1.observation_space.shape[0] == 4 + 2 * 2  # 8
-        assert env2.observation_space.shape[0] == 4 + 2 * 6  # 16
+        assert env1.observation_space.shape[0] == 5 + 2 * 2  # 8
+        assert env2.observation_space.shape[0] == 5 + 2 * 6  # 16
 
         env1.close()
         env2.close()

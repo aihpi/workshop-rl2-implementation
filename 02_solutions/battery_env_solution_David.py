@@ -53,10 +53,12 @@ class BatteryStorageEnv(gym.Env):
         max_charge_rate: float = 2.5,
         efficiency: float = 1.0,
         forecast_horizon: int = 4,
-        enable_degradation: bool = False,
         episode_length: int = 168,
         split: str = "train",
-        train_fraction: float = 0.83,
+        train_fraction: float = 0.80,
+        # parameter for Level 2: additional features for battery degradation
+        enable_degradation: bool = False,
+
     ):
         """
         Initialize the battery storage environment.
@@ -71,7 +73,7 @@ class BatteryStorageEnv(gym.Env):
             enable_degradation: If True, enables battery degradation (Level 2).
             episode_length: Number of hourly steps per episode (default: 168 = 1 week).
             split: Which data split to use: "train" (default), "eval", or "all".
-            train_fraction: Fraction of episodes used for training (default: 0.83).
+            train_fraction: Fraction of episodes used for training (default: 0.80).
                            The remaining fraction is used for evaluation.
         """
         super().__init__()
@@ -110,8 +112,8 @@ class BatteryStorageEnv(gym.Env):
         )
 
         # Define observation space: all normalized to [0, 1]
-        # [soc, hour_of_day, price, load, forecast_price_1, forecast_load_1, ...]
-        obs_dim = 4 + 2 * forecast_horizon
+        # [soc, health, hour_of_day, price, load, forecast_price_1, forecast_load_1, ...]
+        obs_dim = 5 + 2 * forecast_horizon
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32
         )
@@ -122,7 +124,16 @@ class BatteryStorageEnv(gym.Env):
         self.episode_idx: int = 0
         self._current_prices: np.ndarray = np.zeros(self.episode_length)
         self._current_loads: np.ndarray = np.zeros(self.episode_length)
+
+        # Parameter for Level 2: battery health for degradation modeling
         self.health: float = 1.0  # Battery health for degradation (Level 2)
+        self.min_health: float = 0.3  # Minimum health battery can degrade to (Level 2). We use this to prevent the battery from degrading to zero health, which would make the environment unplayable.
+        self.damage_rate: float = 0.001 
+        self.aggresive_charge_threshold: float = 0.7 # threshold for aggressive charging/discharging that causes damage 
+        self.soc_low_threshold: float = 0.2 # threshold for low state of charge that causes damage
+        self.soc_high_threshold: float = 0.8 # threshold for high state of charge that causes damage
+        self.max_capacity: float = capacity # store the original max capacity to calculate effective capacity based on health
+        self.health_weight: float = 100 # weight for health in the reward function (Level 2)
 
     def _load_data(self, data_path: str | Path | None) -> None:
         """
@@ -207,23 +218,39 @@ class BatteryStorageEnv(gym.Env):
         # Clip to valid range
         return float(np.clip(price, 0, 1)), float(np.clip(load, 0, 1))
 
-    def _apply_degradation(self, charge_power: float) -> None:
+    def _apply_degradation(self, charge_power: float) -> float:
         """
         Apply battery degradation based on usage (Level 2 feature).
 
-        This is a stub for the Level 2 workshop extension.
         When enabled, cycling the battery reduces its health over time.
+        Returns the health damage this step (used for reward shaping).
 
         Args:
             charge_power: The charge/discharge power in kW (can be negative).
-        """
-        if not self.enable_degradation:
-            return
 
-        # Level 2: Implement degradation model
-        # Example: health decreases based on energy throughput
-        # self.health -= abs(charge_power) * degradation_rate
-        pass
+        Returns:
+            float: Health damage this step (0.0 if degradation is disabled).
+        """
+        old_health = self.health
+
+        # Apply damage if charge_power exceeds aggressive threshold
+        if abs(charge_power) > (self.aggresive_charge_threshold * self.max_charge_rate):
+            self.health -= self.damage_rate
+
+        # Apply additional damage if soc is too low or too high, which stresses the battery
+        if self.soc < (self.soc_low_threshold * self.capacity) or self.soc > (self.soc_high_threshold * self.capacity):
+            self.health -= self.damage_rate
+
+        # Ensure health doesn't go below min_health to keep environment playable
+        self.health = max(self.min_health, self.health)
+
+        # update effective capacity based on health
+        self.capacity = self.max_capacity * self.health
+
+        # clamp SoC to new capacity
+        self.soc = min(self.soc, self.capacity)
+
+        return old_health - self.health
 
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
@@ -257,9 +284,10 @@ class BatteryStorageEnv(gym.Env):
             [soc_norm, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
         """
         # Normalize state of charge and hour of day
-        soc_norm = self.soc / self.capacity
+        soc_norm = self.soc / self.max_capacity # we have to use max_capacity here to ensure soc_norm is in [0, 1] even as capacity degrades with health, if degradation is enabled in Level 2
+        health = self.health # Include health in observation for Level 2. Already normalized to [0, 1]
         hour_norm = (self.current_step % 24) / 24.0
-        obs = [soc_norm, hour_norm]
+        obs = [soc_norm, health, hour_norm]
 
         # add current price and load (horizon=0) and future forecasts
         for h in range(self.forecast_horizon + 1):
@@ -310,6 +338,9 @@ class BatteryStorageEnv(gym.Env):
         # load the prices of the specific episode
         self._current_prices = self.prices[self.episode_idx]
         self._current_loads = self.loads[self.episode_idx]
+
+        # reset capacity to max_capacity in case it was degraded in previous episode (Level 2)
+        self.capacity = self.max_capacity
 
         # initialize soc to random value
         self.soc = self.np_random.uniform(0, self.capacity)
@@ -374,13 +405,16 @@ class BatteryStorageEnv(gym.Env):
 
         reward = self._calculate_reward(current_load, charge_power_effective, current_price)
 
-        self._apply_degradation(charge_power_effective)
-
         # increment current step and update soc
         self.soc = new_soc
         self.current_step += 1
         terminated = self.current_step >= self.episode_length
         truncated = False
+
+        # Level 2: Apply degradation and penalize health damage in reward
+        if self.enable_degradation:
+            health_damage = self._apply_degradation(charge_power_effective)
+            reward -= self.health_weight * health_damage
 
         return self._get_obs(), reward, terminated, truncated, self._get_info()
 

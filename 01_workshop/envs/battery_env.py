@@ -56,7 +56,7 @@ class BatteryStorageEnv(gym.Env):
         enable_degradation: bool = False,
         episode_length: int = 168,
         split: str = "train",
-        train_fraction: float = 0.83,
+        train_fraction: float = 0.80,
     ):
         """
         Initialize the battery storage environment.
@@ -71,7 +71,7 @@ class BatteryStorageEnv(gym.Env):
             enable_degradation: If True, enables battery degradation (Level 2).
             episode_length: Number of hourly steps per episode (default: 168 = 1 week).
             split: Which data split to use: "train" (default), "eval", or "all".
-            train_fraction: Fraction of episodes used for training (default: 0.83).
+            train_fraction: Fraction of episodes used for training (default: 0.80).
                            The remaining fraction is used for evaluation.
         """
         super().__init__()
@@ -338,15 +338,7 @@ class BatteryStorageEnv(gym.Env):
             - reward should be negative (we want to minimize cost)
         """
         raise NotImplementedError("Implement this method")
-
-    def render(self) -> None:
-        """Render the environment (not implemented)."""
-        pass
-
-    def close(self) -> None:
-        """Clean up resources (not implemented)."""
-        pass
-
+    
     def _get_obs(self) -> np.ndarray:
         """
         Build the observation array for the current state.
@@ -376,3 +368,11 @@ class BatteryStorageEnv(gym.Env):
             [soc_norm, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
         """
         raise NotImplementedError("Implement this method")
+
+    def render(self) -> None:
+        """Render the environment (not implemented)."""
+        pass
+
+    def close(self) -> None:
+        """Clean up resources (not implemented)."""
+        pass

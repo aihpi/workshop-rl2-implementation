@@ -9,6 +9,7 @@ dependencies = [
     "jupyterlab>=4.0.0",         # for notebooks
     "ipywidgets>=8.0.0",         # for notebook widgets
     "pytest>=7.0.0",             # for testing
+    "scipy>=1.11.0",             # for LP/MPC baselines
 ]
 
 [tool.uv]
