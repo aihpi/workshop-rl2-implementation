@@ -1,41 +1,86 @@
 """
-Linear Programming (LP) and Model Predictive Control (MPC) baseline policies for the battery scheduling problem (Level 1).
+Baseline policies for the battery scheduling problem.
 
-These baselines provide optimal or near-optimal comparison points for the RL
-workshop. They solve the battery scheduling problem using classical optimization
-(linear programming) rather than reinforcement learning.
+All policies are factory functions that return callables compatible with
+run_episode() from utils.py: policy(obs) -> action (np.ndarray of shape (1,)).
 
-Two policies are provided:
+Available policies:
 
-1. LP (Linear Programming) with perfect foresight:
+1. Heuristic: Simple rule-based — charge when cheap, discharge when expensive.
+
+2. LP (Linear Programming) with perfect foresight:
    Solves for the entire episode at once, knowing all future prices and loads.
    This gives the globally optimal schedule — no policy can do better.
-   Use this as the theoretical upper bound on performance.
 
-2. MPC (Model Predictive Control) with rolling horizon:
+3. MPC (Model Predictive Control) with rolling horizon:
    At each timestep, solves a small LP looking only a few steps ahead, then
    executes the first action. More realistic than full LP since it doesn't
    require perfect knowledge of the entire future.
 
-Both policies are factory functions that return callables compatible with the
-run_episode() function in the exploration notebook.
-
 Usage:
-    from baselines import make_lp_policy, make_mpc_policy
+    from baselines import make_heuristic_policy, make_lp_policy, make_mpc_policy
 
     env = BatteryStorageEnv(episode_length=730)
 
+    heuristic = make_heuristic_policy(env)
     lp_policy = make_lp_policy(env)
-    data_lp, reward_lp = run_episode(env, policy=lp_policy, seed=42)
-
     mpc_policy = make_mpc_policy(env, horizon=4)
-    data_mpc, reward_mpc = run_episode(env, policy=mpc_policy, seed=42)
 
-Requires: scipy (for scipy.optimize.linprog)
+    data, reward = run_episode(env, policy=lp_policy, seed=42)
+
+Requires: scipy (for LP and MPC)
 """
 
 import numpy as np
 from scipy.optimize import linprog
+
+
+# =============================================================================
+# Heuristic policy
+# =============================================================================
+
+
+def make_heuristic_policy(env, thresholds=(0.2, 0.5)):
+    """
+    Create a simple rule-based heuristic policy.
+
+    The heuristic follows a straightforward strategy:
+    - Charge at full power when the price is low (below charge threshold)
+    - Discharge at full power when the price is high (above discharge threshold)
+    - Do nothing in between
+
+    Thresholds are specified as fractions of the maximum price in the dataset.
+    For example, thresholds=(0.2, 0.5) means:
+    - Charge when price < 20% of max price
+    - Discharge when price > 50% of max price
+
+    Args:
+        env: A BatteryStorageEnv instance (captured by closure to read current price).
+        thresholds: Tuple of (charge_fraction, discharge_fraction). Both are
+            fractions of env.price_max. Default (0.2, 0.5).
+
+    Returns:
+        A callable policy(obs) -> action compatible with run_episode().
+    """
+    charge_threshold = thresholds[0] * env.price_max
+    discharge_threshold = thresholds[1] * env.price_max
+
+    def policy(obs):
+        current_price = env._current_prices[env.current_step]
+
+        if current_price < charge_threshold:
+            return np.array([1.0], dtype=np.float32)    # charge at full power
+        elif current_price > discharge_threshold:
+            return np.array([-1.0], dtype=np.float32)   # discharge at full power
+        else:
+            return np.array([0.0], dtype=np.float32)    # idle
+
+    return policy
+
+
+# =============================================================================
+# LP solver (used by both LP and MPC policies)
+# =============================================================================
 
 
 def _solve_battery_lp(
