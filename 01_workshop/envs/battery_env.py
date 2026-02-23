@@ -50,13 +50,15 @@ class BatteryStorageEnv(gym.Env):
         self,
         data_path: str | Path | None = None,
         capacity: float = 10.0,
-        max_charge_rate: float = 5.0,
+        max_charge_rate: float = 2.5,
         efficiency: float = 1.0,
         forecast_horizon: int = 4,
-        enable_degradation: bool = False,
         episode_length: int = 168,
         split: str = "train",
         train_fraction: float = 0.80,
+        # parameter for Level 2: additional features for battery degradation
+        enable_degradation: bool = False,
+
     ):
         """
         Initialize the battery storage environment.
@@ -80,6 +82,7 @@ class BatteryStorageEnv(gym.Env):
         self.capacity = capacity
         self.max_charge_rate = max_charge_rate
         self.efficiency = efficiency
+        # make sure forecast_horizon is non-negative
         if forecast_horizon < 0:
             raise ValueError("forecast_horizon must be non-negative integer")
         self.forecast_horizon = forecast_horizon
@@ -109,8 +112,8 @@ class BatteryStorageEnv(gym.Env):
         )
 
         # Define observation space: all normalized to [0, 1]
-        # [soc, hour_of_day, price, load, forecast_price_1, forecast_load_1, ...]
-        obs_dim = 4 + 2 * forecast_horizon
+        # [soc, health, hour_of_day, price, load, forecast_price_1, forecast_load_1, ...]
+        obs_dim = 5 + 2 * forecast_horizon
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32
         )
@@ -123,7 +126,16 @@ class BatteryStorageEnv(gym.Env):
         self._current_loads: np.ndarray = np.zeros(self.episode_length)
         self._current_hours_of_day: np.ndarray = np.zeros(self.episode_length, dtype=np.int64)
         self._current_days_of_week: np.ndarray = np.zeros(self.episode_length, dtype=np.int64)
+
+        # Parameter for Level 2: battery health for degradation modeling
         self.health: float = 1.0  # Battery health for degradation (Level 2)
+        self.min_health: float = 0.3  # Minimum health battery can degrade to (Level 2). We use this to prevent the battery from degrading to zero health, which would make the environment unplayable.
+        self.damage_rate: float = 0.002
+        self.aggresive_charge_threshold: float = 0.7 # threshold for aggressive charging/discharging that causes damage
+        self.soc_low_threshold: float = 0.2 # threshold for low state of charge that causes damage
+        self.soc_high_threshold: float = 0.8 # threshold for high state of charge that causes damage
+        self.max_capacity: float = capacity # store the original max capacity to calculate effective capacity based on health
+        self.health_weight: float = 100 # weight for health in the reward function (Level 2)
 
     def _load_data(self, data_path: str | Path | None) -> None:
         """
@@ -217,27 +229,73 @@ class BatteryStorageEnv(gym.Env):
         # Clip to valid range
         return float(np.clip(price, 0, 1)), float(np.clip(load, 0, 1))
 
-    def _apply_degradation(self, charge_power: float) -> None:
+    def _apply_degradation(self, charge_power: float) -> float:
         """
         Apply battery degradation based on usage (Level 2 feature).
 
-        This is a stub for the Level 2 workshop extension.
         When enabled, cycling the battery reduces its health over time.
+        Returns the health damage this step (used for reward shaping).
 
         Args:
             charge_power: The charge/discharge power in kW (can be negative).
-        """
-        if not self.enable_degradation:
-            return
 
-        # Level 2: Implement degradation model
-        # Example: health decreases based on energy throughput
-        # self.health -= abs(charge_power) * degradation_rate
-        pass
+        Returns:
+            float: Health damage this step (0.0 if degradation is disabled).
+        """
+        old_health = self.health
+
+        # Apply damage if charge_power exceeds aggressive threshold
+        if abs(charge_power) > (self.aggresive_charge_threshold * self.max_charge_rate):
+            self.health -= self.damage_rate
+
+        # Apply additional damage if soc is too low or too high, which stresses the battery
+        if self.soc < (self.soc_low_threshold * self.capacity) or self.soc > (self.soc_high_threshold * self.capacity):
+            self.health -= self.damage_rate
+
+        # Ensure health doesn't go below min_health to keep environment playable
+        self.health = max(self.min_health, self.health)
+
+        # update effective capacity based on health
+        self.capacity = self.max_capacity * self.health
+
+        # clamp SoC to new capacity
+        self.soc = min(self.soc, self.capacity)
+
+        return old_health - self.health
 
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
     # =========================================================================
+    def _get_obs(self) -> np.ndarray:
+        """
+        Build the observation array for the current state.
+
+        The observation should contain:
+        1. Normalized state of charge: soc / max_capacity
+        2. Battery health: self.health (already in [0, 1])
+        3. Hour of day: self._current_hours_of_day[current_step] / 24.0
+        4. Normalized current price: from _get_forecast(0)
+        5. Normalized current load: from _get_forecast(0)
+        6. Forecast values: for h in 1..forecast_horizon:
+           - forecast_price_h from _get_forecast(h)
+           - forecast_load_h from _get_forecast(h)
+
+        Returns:
+            np.ndarray: Observation array of shape (5 + 2*forecast_horizon,)
+                       with dtype float32, all values in [0, 1]
+
+        Hints:
+            - Use self._get_forecast(h) to get (price, load) tuple for step h
+            - Use self.max_capacity (not self.capacity) to normalize soc,
+              so that soc_norm stays in [0, 1] even as capacity degrades
+            - self._current_hours_of_day[self.current_step] gives hour of day (0-23)
+            - self.forecast_horizon tells you how many future steps to include
+            - Return type must be np.float32 for Gymnasium compatibility
+
+        Example structure for forecast_horizon=2:
+            [soc_norm, health, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
+        """
+        raise NotImplementedError("Implement this method")
 
     def reset(
         self,
@@ -252,9 +310,10 @@ class BatteryStorageEnv(gym.Env):
         1. Call super().reset(seed=seed) to handle seeding properly
         2. Select a random episode index from the available range
         3. Store the episode's price/load/hours/days data in self._current_prices/loads/hours_of_day/days_of_week
-        4. Initialize self.soc to a random value in [0, capacity]
-        5. Reset self.current_step to 0
-        6. Reset self.health to 1.0 (for degradation feature)
+        4. Reset self.capacity to self.max_capacity (in case it was degraded)
+        5. Initialize self.soc to a random value in [0, capacity]
+        6. Reset self.current_step to 0
+        7. Reset self.health to 1.0 (for degradation feature)
 
         Args:
             seed: Random seed for reproducibility.
@@ -281,19 +340,17 @@ class BatteryStorageEnv(gym.Env):
         Execute one step in the environment.
 
         Steps to implement:
-        1. Extract action value and clip to [-1, 1]
+        1. Extract action value from action array
         2. Convert action to charge power: power = action * max_charge_rate
-        3. Get current price and load from episode data
-        4. Apply battery constraints:
-           - Can't charge above capacity
-           - Can't discharge below 0
-           - Adjust charge_power if needed
-        5. Update state of charge: soc += charge_power * efficiency
-           (For discharge, efficiency loss: soc += charge_power / efficiency)
+        3. Compute new_soc by clipping soc + power to [0, capacity]
+        4. Get current price and load from episode data
+        5. Compute effective charge power (new_soc - soc), which accounts
+           for battery constraints (can't charge above capacity or below 0)
         6. Calculate reward using self._calculate_reward()
-        7. Optionally apply degradation via self._apply_degradation()
+        7. Update self.soc to new_soc
         8. Increment current_step
         9. Check if episode is done (current_step >= episode_length)
+        10. If degradation is enabled, apply it and penalize health damage
 
         Args:
             action: Action array of shape (1,) with value in [-1, 1]
@@ -306,15 +363,14 @@ class BatteryStorageEnv(gym.Env):
             info: Debug info from self._get_info()
 
         Hints:
-            - action[0] or float(action[0]) extracts the scalar value
+            - action[0] extracts the scalar value from the action array
             - np.clip(value, low, high) constrains a value to a range
-            - For charging: new_soc = soc + power * efficiency
-            - For discharging: new_soc = soc + power / efficiency
-              (power is negative when discharging)
-            - Simpler: if efficiency=1.0, just do soc += power
+            - charge_power_effective = new_soc - self.soc accounts for clipping
             - self._current_prices[self.current_step] gives current price
             - self._current_loads[self.current_step] gives current load
             - terminated = (self.current_step >= self.episode_length)
+            - self._apply_degradation(power) returns health_damage (float)
+            - Penalize health damage: reward -= self.health_weight * health_damage
         """
         raise NotImplementedError("Implement this method")
 
@@ -347,36 +403,6 @@ class BatteryStorageEnv(gym.Env):
             - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
             - cost = grid_energy * price
             - reward should be negative (we want to minimize cost)
-        """
-        raise NotImplementedError("Implement this method")
-    
-    def _get_obs(self) -> np.ndarray:
-        """
-        Build the observation array for the current state.
-
-        The observation should contain:
-        1. Normalized state of charge: soc / capacity
-        2. Hour of day: self._current_hours_of_day[current_step] / 24.0
-        3. Normalized current price: from _get_forecast(0)
-        4. Normalized current load: from _get_forecast(0)
-        5. Forecast values: for h in 1..forecast_horizon:
-           - forecast_price_h from _get_forecast(h)
-           - forecast_load_h from _get_forecast(h)
-
-        Returns:
-            np.ndarray: Observation array of shape (4 + 2*forecast_horizon,)
-                       with dtype float32, all values in [0, 1]
-
-        Hints:
-            - Use self._get_forecast(h) to get (price, load) tuple for step h
-            - self.soc is current state of charge in kWh
-            - self.capacity is maximum capacity in kWh
-            - self._current_hours_of_day[self.current_step] gives hour of day (0-23)
-            - self.forecast_horizon tells you how many future steps to include
-            - Return type must be np.float32 for Gymnasium compatibility
-
-        Example structure for forecast_horizon=2:
-            [soc_norm, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
         """
         raise NotImplementedError("Implement this method")
 
