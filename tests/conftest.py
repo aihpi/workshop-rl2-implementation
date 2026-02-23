@@ -6,7 +6,8 @@ implementation.
 
 Usage:
     uv run pytest tests/ -v                     # Test participant's implementation (default)
-    uv run pytest tests/ -v --solution <name>   # Test a solution from 02_solutions/
+    uv run pytest tests/ -v --solution           # Test the default solution (battery_env_solution.py)
+    uv run pytest tests/ -v --solution <name>   # Test a named variant (battery_env_solution_<name>.py)
 """
 
 import importlib
@@ -53,9 +54,12 @@ _create_module_alias("solutions", project_root / "02_solutions")
 def pytest_addoption(parser):
     parser.addoption(
         "--solution",
+        nargs="?",
+        const="",
         default=None,
-        help="Name of a solution file to test (e.g. 'my_solution' for battery_env_solution_my_solution.py). "
-             "If omitted, tests the workshop skeleton in 01_workshop/envs/battery_env.py.",
+        help="Test a solution instead of the workshop skeleton. "
+             "Use '--solution' for the default (battery_env_solution.py) or "
+             "'--solution <name>' for a named variant (battery_env_solution_<name>.py).",
     )
 
 
@@ -69,8 +73,13 @@ def env_cls(request):
     solution = request.config.getoption("--solution")
 
     if solution is None:
+        # No flag: test the workshop skeleton
         from workshop.envs.battery_env import BatteryStorageEnv
+    elif solution == "":
+        # --solution (no argument): test the default solution
+        from solutions.battery_env_solution import BatteryStorageEnv
     else:
+        # --solution <name>: test a named variant
         module = importlib.import_module(f"solutions.battery_env_solution_{solution}")
         BatteryStorageEnv = module.BatteryStorageEnv
 

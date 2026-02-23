@@ -40,7 +40,7 @@ from scipy.optimize import linprog
 # =============================================================================
 
 
-def make_heuristic_policy(env, thresholds=(0.2, 0.5)):
+def make_heuristic_policy(env, thresholds=(0.5, 0.5)):
     """
     Create a simple rule-based heuristic policy.
 
