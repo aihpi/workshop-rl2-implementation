@@ -190,6 +190,7 @@ class BatteryStorageEnv(gym.Env):
             "load": self._current_loads[step_idx],
             "hour_of_day": int(self._current_hours_of_day[step_idx]),
             "health": self.health,
+            "capacity": self.capacity,
         }
 
     def _get_forecast(self, horizon: int) -> tuple[float, float]:

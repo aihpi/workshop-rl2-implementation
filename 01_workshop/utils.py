@@ -7,6 +7,19 @@ from stable_baselines3.common.evaluation import evaluate_policy
 
 
 # =============================================================================
+# Consistent color scheme used across all plots
+# =============================================================================
+
+COLOR_PRICE = "tab:blue"
+COLOR_LOAD = "black"
+COLOR_GRID = "tab:purple"
+COLOR_SOC = "tab:green"
+COLOR_CHARGE = "tab:green"
+COLOR_DISCHARGE = "tab:red"
+COLOR_IDLE = "tab:gray"
+
+
+# =============================================================================
 # Episode running and visualization
 # =============================================================================
 
@@ -31,7 +44,8 @@ def run_episode(
 
     Returns:
         data: Dict with lists of per-step data:
-            "soc", "price", "load", "action", "reward", "grid_energy"
+            "soc", "price", "load", "health", "capacity",
+            "action", "reward", "grid_energy"
         total_reward: Sum of all step rewards (negative = cost).
     """
     obs, info = env.reset(seed=seed)
@@ -41,6 +55,7 @@ def run_episode(
         "price": [info["price"]],
         "load": [info["load"]],
         "health": [info["health"]],
+        "capacity": [info["capacity"]],
         "action": [],
         "reward": [],
         "grid_energy": [],
@@ -80,87 +95,25 @@ def run_episode(
             data["price"].append(info["price"])
             data["load"].append(info["load"])
             data["health"].append(info["health"])
+            data["capacity"].append(info["capacity"])
 
         total_reward += reward
 
     return data, total_reward
 
-def plot_episode_old(data: dict[str, list], title: str = "Episode", xlim=None):
-    """Plot episode data collected by run_episode().
-
-    Creates a 5-panel figure: price, load/grid energy, SoC, actions, and
-    cumulative savings vs. the no-battery baseline.
-
-    Args:
-        data: Dict returned by run_episode().
-        title: Title shown above the top panel.
-        xlim: Optional (start, end) tuple to zoom into a time range.
-
-    Returns:
-        matplotlib Figure (call plt.show() to display).
-    """
-    fig, axes = plt.subplots(5, 1, figsize=(14, 12), sharex=True)
-    hours = np.arange(len(data["price"]))
-
-    # Panel 1: Electricity price
-    axes[0].plot(hours, data["price"], "b-", linewidth=0.8)
-    axes[0].set_ylabel("Price (€/kWh)")
-    axes[0].set_title(title)
-    axes[0].grid(True, alpha=0.3)
-
-    # Panel 2: Household load vs. actual grid energy
-    axes[1].plot(hours, data["load"], "orange", linewidth=0.8, label="Load")
-    axes[1].plot(hours, data["grid_energy"], "red", linewidth=0.8, alpha=0.7, label="Grid Energy")
-    axes[1].axhline(y=0, color="black", linestyle="--", alpha=0.3)
-    axes[1].set_ylabel("Energy (kWh)")
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
-
-    # Panel 3: Battery state of charge
-    axes[2].plot(hours, data["soc"], "g-", linewidth=0.8)
-    axes[2].axhline(y=10, color="red", linestyle="--", alpha=0.5, label="Capacity")
-    axes[2].set_ylabel("SoC (kWh)")
-    axes[2].set_ylim(0, 11)
-    axes[2].legend()
-    axes[2].grid(True, alpha=0.3)
-
-    # Panel 4: Agent actions (green=charge, red=discharge)
-    colors = ["green" if a > 0 else "red" if a < 0 else "gray" for a in data["action"]]
-    axes[3].bar(hours, data["action"], color=colors, alpha=0.7, width=1.0)
-    axes[3].set_ylabel("Action")
-    axes[3].set_ylim(-1.1, 1.1)
-    axes[3].axhline(y=0, color="black", linestyle="-", alpha=0.3)
-    axes[3].grid(True, alpha=0.3)
-
-    # Panel 5: Cumulative savings vs. no-battery baseline
-    baseline_cost = np.cumsum(np.array(data["price"]) * np.array(data["load"]))
-    actual_cost = np.cumsum(-np.array(data["reward"]))
-    savings = baseline_cost - actual_cost
-    axes[4].plot(hours, savings, "g-", linewidth=0.8)
-    axes[4].axhline(y=0, color="black", linestyle="--", alpha=0.3)
-    axes[4].fill_between(hours, 0, savings, where=savings >= 0, alpha=0.2, color="green")
-    axes[4].fill_between(hours, 0, savings, where=savings < 0, alpha=0.2, color="red")
-    axes[4].set_ylabel("Savings (€)")
-    axes[4].set_xlabel("Hour")
-    axes[4].grid(True, alpha=0.3)
-
-    # Day markers on x-axis
-    day_ticks = np.arange(0, len(data["price"]), 24)
-    axes[4].set_xticks(day_ticks)
-    axes[4].set_xticklabels([f"Day {i // 24 + 1}" for i in day_ticks], rotation=45)
-
-    if xlim:
-        for ax in axes:
-            ax.set_xlim(xlim)
-
-    plt.tight_layout()
-    return fig
 
 def plot_episode(data: dict[str, list], title: str = "Episode", xlim=None):
     """Plot episode data collected by run_episode().
 
-    Creates a 5-panel figure: price, load/grid energy, SoC, actions, and
-    cumulative savings vs. the no-battery baseline.
+    Creates a 5-panel figure showing the full story of a battery episode:
+    context (price, load) → decision (actions) → state (SoC) → result (savings).
+
+    Panel order:
+        1. Price — electricity price over time
+        2. Load / Grid energy — with green/red fill showing battery impact
+        3. Actions — charge/discharge/idle bar chart
+        4. SoC — battery level with dynamic capacity line
+        5. Savings — cumulative savings vs. no-battery baseline
 
     Args:
         data: Dict returned by run_episode().
@@ -172,45 +125,54 @@ def plot_episode(data: dict[str, list], title: str = "Episode", xlim=None):
     """
     fig, axes = plt.subplots(5, 1, figsize=(14, 12), sharex=True)
     hours = np.arange(len(data["price"]))
+    load = np.array(data["load"])
+    grid = np.array(data["grid_energy"])
 
     # Panel 1: Electricity price
-    axes[0].plot(hours, data["price"], "b-", linewidth=0.8)
+    axes[0].plot(hours, data["price"], COLOR_PRICE, linewidth=1)
     axes[0].set_ylabel("Price (€/kWh)")
     axes[0].set_title(title)
     axes[0].grid(True, alpha=0.3)
 
-    # Panel 2: Household load vs. actual grid energy
-    axes[1].plot(hours, data["load"], "orange", linewidth=0.8, label="Load")
-    axes[1].plot(hours, data["grid_energy"], "red", linewidth=0.8, alpha=0.7, label="Grid Energy")
-    axes[1].axhline(y=0, color="black", linestyle="--", alpha=0.3)
+    # Panel 2: Load vs. grid energy with fill showing battery impact
+    axes[1].plot(hours, load, COLOR_LOAD, linewidth=1, label="Load")
+    axes[1].plot(hours, grid, COLOR_GRID, linewidth=1, label="Grid Energy")
+    axes[1].fill_between(hours, load, grid, where=grid >= load,
+                         alpha=0.2, color=COLOR_CHARGE, label="Charging")
+    axes[1].fill_between(hours, load, grid, where=grid < load,
+                         alpha=0.2, color=COLOR_DISCHARGE, label="Discharging")
     axes[1].set_ylabel("Energy (kWh)")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
 
-    # Panel 3: Battery state of charge
-    axes[2].plot(hours, data["soc"], "g-", linewidth=0.8)
-    axes[2].axhline(y=10, color="red", linestyle="--", alpha=0.5, label="Capacity")
-    axes[2].set_ylabel("SoC (kWh)")
-    axes[2].set_ylim(0, 11)
-    axes[2].legend()
+    # Panel 3: Agent actions (green=charge, red=discharge)
+    colors = [COLOR_CHARGE if a > 0 else COLOR_DISCHARGE if a < 0 else COLOR_IDLE
+              for a in data["action"]]
+    axes[2].bar(hours, data["action"], color=colors, alpha=0.7, width=1.0)
+    axes[2].set_ylabel("Action")
+    axes[2].set_ylim(-1.1, 1.1)
+    axes[2].axhline(y=0, color="black", linestyle="-", alpha=0.3)
     axes[2].grid(True, alpha=0.3)
 
-    # Panel 4: Agent actions (green=charge, red=discharge)
-    colors = ["green" if a > 0 else "red" if a < 0 else "gray" for a in data["action"]]
-    axes[3].bar(hours, data["action"], color=colors, alpha=0.7, width=1.0)
-    axes[3].set_ylabel("Action")
-    axes[3].set_ylim(-1.1, 1.1)
-    axes[3].axhline(y=0, color="black", linestyle="-", alpha=0.3)
+    # Panel 4: Battery state of charge with dynamic capacity line
+    axes[3].plot(hours, data["soc"], COLOR_SOC, linewidth=1, label="SoC")
+    axes[3].plot(hours, data["capacity"], color=COLOR_DISCHARGE, linestyle="--",
+                 alpha=0.5, linewidth=1, label="Capacity")
+    axes[3].set_ylabel("SoC (kWh)")
+    axes[3].set_ylim(0, max(data["capacity"]) * 1.1)
+    axes[3].legend()
     axes[3].grid(True, alpha=0.3)
 
     # Panel 5: Cumulative savings vs. no-battery baseline
-    baseline_cost = np.cumsum(np.array(data["price"]) * np.array(data["load"]))
+    baseline_cost = np.cumsum(np.array(data["price"]) * load)
     actual_cost = np.cumsum(-np.array(data["reward"]))
     savings = baseline_cost - actual_cost
-    axes[4].plot(hours, savings, "g-", linewidth=0.8)
+    axes[4].plot(hours, savings, "black", linewidth=1)
     axes[4].axhline(y=0, color="black", linestyle="--", alpha=0.3)
-    axes[4].fill_between(hours, 0, savings, where=savings >= 0, alpha=0.2, color="green")
-    axes[4].fill_between(hours, 0, savings, where=savings < 0, alpha=0.2, color="red")
+    axes[4].fill_between(hours, 0, savings, where=savings >= 0,
+                         alpha=0.2, color=COLOR_CHARGE)
+    axes[4].fill_between(hours, 0, savings, where=savings < 0,
+                         alpha=0.2, color=COLOR_DISCHARGE)
     axes[4].set_ylabel("Savings (€)")
     axes[4].set_xlabel("Hour")
     axes[4].grid(True, alpha=0.3)
@@ -262,7 +224,7 @@ class LiveEvalCallback(BaseCallback):
     Args:
         eval_env: A Gymnasium environment used for evaluation (should use split="eval"
             to avoid evaluating on training data).
-        eval_freq: How often to evaluate, in timesteps. 
+        eval_freq: How often to evaluate, in timesteps.
         n_eval_episodes: How many episodes to run per evaluation. More episodes
             give a smoother curve but slow down training. 10 is a good balance.
         baseline_cost: Optional reference cost (e.g., the "no battery" cost) shown
@@ -351,13 +313,13 @@ class LiveEvalCallback(BaseCallback):
 
         # Convert rewards (negative, since cost = -reward) to positive costs
         costs = [-r for r in self.mean_rewards]
-        ax.plot(self.timesteps, costs, "b-", linewidth=1.5)
+        ax.plot(self.timesteps, costs, COLOR_PRICE, linewidth=1.5)
 
         # Draw the "no battery" baseline as a reference line
         if self.baseline_cost is not None:
             ax.axhline(
                 y=self.baseline_cost,
-                color="red",
+                color=COLOR_DISCHARGE,
                 linestyle="--",
                 alpha=0.7,
                 label=f"No battery: {self.baseline_cost:.0f} €",

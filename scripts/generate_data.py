@@ -158,14 +158,14 @@ def plot_data(prices: np.ndarray, loads: np.ndarray, start_hour: int = 0, n_hour
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
 
     # Price plot
-    ax1.plot(x, prices_slice, 'b-', linewidth=0.8)
+    ax1.plot(x, prices_slice, 'tab:blue', linewidth=1)
     ax1.set_ylabel('Price (EUR/kWh)')
     ax1.set_title(f'Data preview (hours {start_hour}-{start_hour + n_hours})')
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(0, 0.7)
 
     # Load plot
-    ax2.plot(x, loads_slice, color='orange', linewidth=0.8)
+    ax2.plot(x, loads_slice, color='black', linewidth=1)
     ax2.set_ylabel('Load (kWh)')
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, 3)
@@ -173,7 +173,7 @@ def plot_data(prices: np.ndarray, loads: np.ndarray, start_hour: int = 0, n_hour
     # Accumulated cost plot
     hourly_cost = prices_slice * loads_slice
     accumulated_cost = np.cumsum(hourly_cost)
-    ax3.plot(x, accumulated_cost, 'g-', linewidth=0.8)
+    ax3.plot(x, accumulated_cost, 'tab:purple', linewidth=1)
     ax3.set_ylabel('Cost (EUR)')
     ax3.set_title(f'Baseline Cost: {accumulated_cost[-1]:.2f} EUR')
     ax3.set_xlabel('Hour')
