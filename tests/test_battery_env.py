@@ -159,7 +159,7 @@ class TestBatteryEnv:
         """Test that info dict contains expected keys."""
         _, info = env.reset(seed=42)
 
-        expected_keys = {"soc", "step", "episode_idx", "price", "load", "hour_of_day", "health", "capacity"}
+        expected_keys = {"soc", "step", "episode_idx", "price", "load", "hour_of_day", "day_of_week", "health", "capacity"}
         assert expected_keys.issubset(info.keys())
 
     def test_forecast_horizon_affects_observation_size(self, env_cls):

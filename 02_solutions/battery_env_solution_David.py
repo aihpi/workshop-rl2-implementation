@@ -125,6 +125,7 @@ class BatteryStorageEnv(gym.Env):
         self._current_prices: np.ndarray = np.zeros(self.episode_length)
         self._current_loads: np.ndarray = np.zeros(self.episode_length)
         self._current_hours_of_day: np.ndarray = np.zeros(self.episode_length, dtype=np.int64)
+        self._current_days_of_week: np.ndarray = np.zeros(self.episode_length, dtype=np.int64)
 
         # Parameter for Level 2: battery health for degradation modeling
         self.health: float = 1.0  # Battery health for degradation (Level 2)
@@ -148,6 +149,7 @@ class BatteryStorageEnv(gym.Env):
             self.prices: Shape (n_episodes, episode_length) - chunked price data
             self.loads: Shape (n_episodes, episode_length) - chunked load data
             self.hours_of_day: Shape (n_episodes, episode_length) - hour of day (0-23)
+            self.days_of_week: Shape (n_episodes, episode_length) - day of week (0=Mon, 6=Sun)
             self.n_episodes: Number of complete episodes available
             self.price_max: Maximum price for normalization
             self.load_max: Maximum load for normalization
@@ -161,12 +163,14 @@ class BatteryStorageEnv(gym.Env):
         prices_raw = np.load(data_path / "prices.npy").flatten()
         loads_raw = np.load(data_path / "loads.npy").flatten()
         hours_raw = np.load(data_path / "hours_of_day.npy").flatten()
+        days_raw = np.load(data_path / "days_of_week.npy").flatten()
 
         # Chunk into episodes, discarding incomplete trailing hours
         n_usable = (len(prices_raw) // self.episode_length) * self.episode_length
         self.prices = prices_raw[:n_usable].reshape(-1, self.episode_length)
         self.loads = loads_raw[:n_usable].reshape(-1, self.episode_length)
         self.hours_of_day = hours_raw[:n_usable].reshape(-1, self.episode_length)
+        self.days_of_week = days_raw[:n_usable].reshape(-1, self.episode_length)
         self.n_episodes = self.prices.shape[0]
 
         # Compute normalization constants from usable data only
@@ -189,6 +193,7 @@ class BatteryStorageEnv(gym.Env):
             "price": self._current_prices[step_idx],
             "load": self._current_loads[step_idx],
             "hour_of_day": int(self._current_hours_of_day[step_idx]),
+            "day_of_week": int(self._current_days_of_week[step_idx]),
             "health": self.health,
             "capacity": self.capacity,
         }
@@ -354,6 +359,7 @@ class BatteryStorageEnv(gym.Env):
         self._current_prices = self.prices[self.episode_idx]
         self._current_loads = self.loads[self.episode_idx]
         self._current_hours_of_day = self.hours_of_day[self.episode_idx]
+        self._current_days_of_week = self.days_of_week[self.episode_idx]
 
         # reset capacity to max_capacity in case it was degraded in previous episode (Level 2)
         self.capacity = self.max_capacity

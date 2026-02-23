@@ -45,7 +45,7 @@ def run_episode(
     Returns:
         data: Dict with lists of per-step data:
             "soc", "price", "load", "health", "capacity",
-            "action", "reward", "grid_energy"
+            "hour_of_day", "day_of_week", "action", "reward", "grid_energy"
         total_reward: Sum of all step rewards (negative = cost).
     """
     obs, info = env.reset(seed=seed)
@@ -56,6 +56,8 @@ def run_episode(
         "load": [info["load"]],
         "health": [info["health"]],
         "capacity": [info["capacity"]],
+        "hour_of_day": [info["hour_of_day"]],
+        "day_of_week": [info["day_of_week"]],
         "action": [],
         "reward": [],
         "grid_energy": [],
@@ -96,10 +98,21 @@ def run_episode(
             data["load"].append(info["load"])
             data["health"].append(info["health"])
             data["capacity"].append(info["capacity"])
+            data["hour_of_day"].append(info["hour_of_day"])
+            data["day_of_week"].append(info["day_of_week"])
 
         total_reward += reward
 
     return data, total_reward
+
+
+def compute_energy_cost(data: dict[str, list]) -> float:
+    """Compute total energy cost from episode data.
+
+    Uses grid_energy * price directly, which is always the true energy cost
+    regardless of any reward shaping (e.g. degradation penalty).
+    """
+    return float(np.sum(np.array(data["grid_energy"]) * np.array(data["price"])))
 
 
 def plot_episode(data: dict[str, list], title: str = "Episode", xlim=None):
@@ -174,13 +187,25 @@ def plot_episode(data: dict[str, list], title: str = "Episode", xlim=None):
     axes[4].fill_between(hours, 0, savings, where=savings < 0,
                          alpha=0.2, color=COLOR_DISCHARGE)
     axes[4].set_ylabel("Savings (€)")
-    axes[4].set_xlabel("Hour")
+    axes[4].set_xlabel("Time (hours)")
     axes[4].grid(True, alpha=0.3)
 
-    # Day markers on x-axis
-    day_ticks = np.arange(0, len(data["price"]), 24)
-    axes[4].set_xticks(day_ticks)
-    axes[4].set_xticklabels([f"Day {i // 24 + 1}" for i in day_ticks], rotation=45)
+    # X-axis: weekday labels at midnight boundaries
+    DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    hour_of_day = np.array(data["hour_of_day"])
+    day_of_week = np.array(data["day_of_week"])
+
+    midnight_indices = np.where(hour_of_day == 0)[0]
+    axes[4].set_xticks(midnight_indices)
+    axes[4].set_xticklabels(
+        [DAY_LABELS[day_of_week[i]] for i in midnight_indices],
+        rotation=45,
+    )
+
+    # Vertical day-boundary lines at midnight
+    for idx in midnight_indices:
+        for ax in axes:
+            ax.axvline(idx, color="gray", linestyle="--", alpha=0.3)
 
     if xlim:
         for ax in axes:

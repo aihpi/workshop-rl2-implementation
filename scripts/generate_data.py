@@ -226,6 +226,10 @@ if __name__ == "__main__":
     # for each timestep, even when episode_length is not a multiple of 24.
     hours_of_day = np.arange(n_hours) % 24
 
+    # Generate day-of-week timeseries (0=Mon, ..., 6=Sun)
+    # Matches the convention in generate_price_profile() where day_of_week >= 5 is weekend.
+    days_of_week = np.arange(n_hours) // 24 % 7
+
     # Save data
     print("\nSaving data...")
     np.save(data_dir / "prices.npy", prices)
@@ -234,6 +238,8 @@ if __name__ == "__main__":
     print(f"  Saved: {data_dir / 'loads.npy'}")
     np.save(data_dir / "hours_of_day.npy", hours_of_day)
     print(f"  Saved: {data_dir / 'hours_of_day.npy'}")
+    np.save(data_dir / "days_of_week.npy", days_of_week)
+    print(f"  Saved: {data_dir / 'days_of_week.npy'}")
 
     # Plot sample data window
     print("\nPlotting data preview...")
