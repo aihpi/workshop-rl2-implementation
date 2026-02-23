@@ -178,7 +178,7 @@ def plot_episode(data: dict[str, list], title: str = "Episode", xlim=None):
 
     # Panel 5: Cumulative savings vs. no-battery baseline
     baseline_cost = np.cumsum(np.array(data["price"]) * load)
-    actual_cost = np.cumsum(-np.array(data["reward"]))
+    actual_cost = np.cumsum(np.array(data["grid_energy"]) * np.array(data["price"]))
     savings = baseline_cost - actual_cost
     axes[4].plot(hours, savings, "black", linewidth=1)
     axes[4].axhline(y=0, color="black", linestyle="--", alpha=0.3)
@@ -336,31 +336,29 @@ class LiveEvalCallback(BaseCallback):
 
         fig, ax = plt.subplots(figsize=(10, 4))
 
-        # Convert rewards (negative, since cost = -reward) to positive costs
-        costs = [-r for r in self.mean_rewards]
-        ax.plot(self.timesteps, costs, COLOR_PRICE, linewidth=1.5)
+        ax.plot(self.timesteps, self.mean_rewards, COLOR_PRICE, linewidth=1.5)
 
         # Draw the "no battery" baseline as a reference line
         if self.baseline_cost is not None:
             ax.axhline(
-                y=self.baseline_cost,
+                y=-self.baseline_cost,
                 color=COLOR_DISCHARGE,
                 linestyle="--",
                 alpha=0.7,
-                label=f"No battery: {self.baseline_cost:.0f} €",
+                label=f"No battery: -{self.baseline_cost:.0f}",
             )
-            ax.legend(loc="upper right")
+            ax.legend(loc="lower right")
 
         # self.locals is a dict of local variables from PPO's learn() method,
         # provided by BaseCallback. We use it to get total_timesteps for the title.
         total = self.locals.get("total_timesteps", self.num_timesteps)
-        current_cost = costs[-1]
+        current_reward = self.mean_rewards[-1]
         ax.set_title(
             f"Training: {self.num_timesteps / 1e6:.1f}M / {total / 1e6:.1f}M steps "
-            f"— Avg cost: {current_cost:.2f} €"
+            f"— Avg reward: {current_reward:.2f}"
         )
         ax.set_xlabel("Timesteps")
-        ax.set_ylabel("Avg Cost per Episode (€)")
+        ax.set_ylabel("Avg Reward per Episode")
         ax.grid(alpha=0.3)
 
         plt.tight_layout()

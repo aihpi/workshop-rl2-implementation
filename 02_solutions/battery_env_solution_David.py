@@ -130,7 +130,7 @@ class BatteryStorageEnv(gym.Env):
         # Parameter for Level 2: battery health for degradation modeling
         self.health: float = 1.0  # Battery health for degradation (Level 2)
         self.min_health: float = 0.3  # Minimum health battery can degrade to (Level 2). We use this to prevent the battery from degrading to zero health, which would make the environment unplayable.
-        self.damage_rate: float = 0.001 
+        self.damage_rate: float = 0.002 
         self.aggresive_charge_threshold: float = 0.7 # threshold for aggressive charging/discharging that causes damage 
         self.soc_low_threshold: float = 0.2 # threshold for low state of charge that causes damage
         self.soc_high_threshold: float = 0.8 # threshold for high state of charge that causes damage
