@@ -113,11 +113,12 @@ class BatteryStorageEnv(gym.Env):
         self.episode_idx: int = 0
         self._current_prices: np.ndarray = np.zeros(self.episode_length)
         self._current_loads: np.ndarray = np.zeros(self.episode_length)
+        self._current_hours_of_day: np.ndarray = np.zeros(self.episode_length, dtype=np.int64)
         self.health: float = 1.0  # Battery health for degradation (Level 2)
 
     def _load_data(self, data_path: str | Path | None) -> None:
         """
-        Load price and load data from .npy files and chunk into episodes.
+        Load price, load, and hour-of-day data from .npy files and chunk into episodes.
 
         The raw data is a flat 1D timeseries. This method chunks it into
         episodes of length self.episode_length, discarding any leftover hours
@@ -126,6 +127,7 @@ class BatteryStorageEnv(gym.Env):
         Sets:
             self.prices: Shape (n_episodes, episode_length) - chunked price data
             self.loads: Shape (n_episodes, episode_length) - chunked load data
+            self.hours_of_day: Shape (n_episodes, episode_length) - hour of day (0-23)
             self.n_episodes: Number of complete episodes available
             self.price_max: Maximum price for normalization
             self.load_max: Maximum load for normalization
@@ -138,11 +140,13 @@ class BatteryStorageEnv(gym.Env):
 
         prices_raw = np.load(data_path / "prices.npy").flatten()
         loads_raw = np.load(data_path / "loads.npy").flatten()
+        hours_raw = np.load(data_path / "hours_of_day.npy").flatten()
 
         # Chunk into episodes, discarding incomplete trailing hours
         n_usable = (len(prices_raw) // self.episode_length) * self.episode_length
         self.prices = prices_raw[:n_usable].reshape(-1, self.episode_length)
         self.loads = loads_raw[:n_usable].reshape(-1, self.episode_length)
+        self.hours_of_day = hours_raw[:n_usable].reshape(-1, self.episode_length)
         self.n_episodes = self.prices.shape[0]
 
         # Compute normalization constants from usable data only
@@ -157,13 +161,14 @@ class BatteryStorageEnv(gym.Env):
             Dictionary with current state information for debugging.
         """
         # Safe index for terminal state (at episode_length -> use last valid index)
-        idx = min(self.current_step, self.episode_length - 1)
+        step_idx = min(self.current_step, self.episode_length - 1)
         return {
             "soc": self.soc,
             "step": self.current_step,
             "episode_idx": self.episode_idx,
-            "price": self._current_prices[idx],
-            "load": self._current_loads[idx],
+            "price": self._current_prices[step_idx],
+            "load": self._current_loads[step_idx],
+            "hour_of_day": int(self._current_hours_of_day[step_idx]),
             "health": self.health,
         }
 
@@ -242,8 +247,11 @@ class BatteryStorageEnv(gym.Env):
         soc_norm = self.soc / self.capacity
         obs.append(soc_norm)
 
-        # Hour of day (normalized to [0, 1])
-        hour_of_day = (self.current_step % 24) / 24.0
+        # Safe index for terminal state (at episode_length -> use last valid index)
+        step_idx = min(self.current_step, self.episode_length - 1)
+
+        # Hour of day (normalized to [0, 1]) — read from data, not computed from step index
+        hour_of_day = self._current_hours_of_day[step_idx] / 24.0
         obs.append(hour_of_day)
 
         # Current and forecast values
@@ -297,6 +305,7 @@ class BatteryStorageEnv(gym.Env):
         # Store episode data
         self._current_prices = self.prices[self.episode_idx].copy()
         self._current_loads = self.loads[self.episode_idx].copy()
+        self._current_hours_of_day = self.hours_of_day[self.episode_idx]
 
         # Initialize state
         self.soc = self.np_random.uniform(0, self.capacity)

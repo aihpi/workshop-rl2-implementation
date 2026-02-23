@@ -149,54 +149,52 @@ def generate_load_profile(n_hours: int = 87600, seed: int = 43, autocorr: float 
     return loads
 
 
-def plot_episode(prices: np.ndarray, loads: np.ndarray, start_hour: int = 0, episode_length: int = 168):
-    """Plot a single episode of price, load, and baseline cost data."""
-    prices_ep = prices[start_hour : start_hour + episode_length]
-    loads_ep = loads[start_hour : start_hour + episode_length]
-    hours = np.arange(episode_length)
+def plot_data(prices: np.ndarray, loads: np.ndarray, start_hour: int = 0, n_hours: int = 168):
+    """Plot a sample window of price, load, and baseline cost data."""
+    prices_slice = prices[start_hour : start_hour + n_hours]
+    loads_slice = loads[start_hour : start_hour + n_hours]
+    x = np.arange(n_hours)
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
 
     # Price plot
-    ax1.plot(hours, prices_ep, 'b-', linewidth=0.8)
+    ax1.plot(x, prices_slice, 'b-', linewidth=0.8)
     ax1.set_ylabel('Price (EUR/kWh)')
-    ax1.set_title(f'Episode (hours {start_hour}-{start_hour + episode_length}): '
-                  f'Electricity Price, Load, and Baseline Cost')
+    ax1.set_title(f'Data preview (hours {start_hour}-{start_hour + n_hours})')
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(0, 0.7)
 
     # Load plot
-    ax2.plot(hours, loads_ep, color='orange', linewidth=0.8)
+    ax2.plot(x, loads_slice, color='orange', linewidth=0.8)
     ax2.set_ylabel('Load (kWh)')
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, 3)
 
     # Accumulated cost plot
-    hourly_cost = prices_ep * loads_ep
+    hourly_cost = prices_slice * loads_slice
     accumulated_cost = np.cumsum(hourly_cost)
-    ax3.plot(hours, accumulated_cost, 'g-', linewidth=0.8)
+    ax3.plot(x, accumulated_cost, 'g-', linewidth=0.8)
     ax3.set_ylabel('Cost (EUR)')
-    ax3.set_title(f'Baseline Episode Cost: {accumulated_cost[-1]:.2f} EUR')
+    ax3.set_title(f'Baseline Cost: {accumulated_cost[-1]:.2f} EUR')
     ax3.set_xlabel('Hour')
     ax3.grid(True, alpha=0.3)
 
     # Set x-axis ticks at day boundaries (multiples of 24)
-    n_days = episode_length // 24
-    tick_positions = np.arange(0, episode_length + 1, 24)
+    n_days = n_hours // 24
+    tick_positions = np.arange(0, n_hours + 1, 24)
     ax3.set_xticks(tick_positions)
     day_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     labels = []
     for h in tick_positions:
         abs_hour = start_hour + h
         day_idx = (abs_hour // 24) % 7
-        labels.append(f'{h}\n{day_labels[day_idx]}' if h < episode_length else str(h))
+        labels.append(f'{h}\n{day_labels[day_idx]}' if h < n_hours else str(h))
     ax3.set_xticklabels(labels)
 
     # Add vertical lines at day boundaries
     for i in range(n_days + 1):
-        ax1.axvline(i * 24, color='gray', linestyle='--', alpha=0.3)
-        ax2.axvline(i * 24, color='gray', linestyle='--', alpha=0.3)
-        ax3.axvline(i * 24, color='gray', linestyle='--', alpha=0.3)
+        for ax in [ax1, ax2, ax3]:
+            ax.axvline(i * 24, color='gray', linestyle='--', alpha=0.3)
 
     plt.tight_layout()
     return fig
@@ -223,18 +221,25 @@ if __name__ == "__main__":
     print(f"  Range: {loads.min():.3f} - {loads.max():.3f} kWh")
     print(f"  Total consumption: {loads.sum():.0f} kWh ({loads.sum() / 10:.0f} kWh/year)")
 
+    # Generate hour-of-day timeseries (0-23 repeating)
+    # This is saved alongside price/load so each episode knows the real hour-of-day
+    # for each timestep, even when episode_length is not a multiple of 24.
+    hours_of_day = np.arange(n_hours) % 24
+
     # Save data
     print("\nSaving data...")
     np.save(data_dir / "prices.npy", prices)
     print(f"  Saved: {data_dir / 'prices.npy'}")
     np.save(data_dir / "loads.npy", loads)
     print(f"  Saved: {data_dir / 'loads.npy'}")
+    np.save(data_dir / "hours_of_day.npy", hours_of_day)
+    print(f"  Saved: {data_dir / 'hours_of_day.npy'}")
 
-    # Plot sample episode
-    print("\nPlotting sample episode...")
-    start_hour = 0  # You can change this to plot a different episode (e.g., start_hour=8760 for year 2)
-    fig = plot_episode(prices, loads, start_hour=start_hour)
-    plt.savefig(data_dir / "episode_preview.png", dpi=100)
-    print(f"  Saved: episode_preview.png")
+    # Plot sample data window
+    print("\nPlotting data preview...")
+    start_hour = 0  # You can change this to plot a different window (e.g., start_hour=8760 for year 2)
+    fig = plot_data(prices, loads, start_hour=start_hour)
+    plt.savefig(data_dir / "data_preview.png", dpi=100)
+    print(f"  Saved: data_preview.png")
 
     plt.show()

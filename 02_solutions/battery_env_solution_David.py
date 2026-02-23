@@ -124,6 +124,7 @@ class BatteryStorageEnv(gym.Env):
         self.episode_idx: int = 0
         self._current_prices: np.ndarray = np.zeros(self.episode_length)
         self._current_loads: np.ndarray = np.zeros(self.episode_length)
+        self._current_hours_of_day: np.ndarray = np.zeros(self.episode_length, dtype=np.int64)
 
         # Parameter for Level 2: battery health for degradation modeling
         self.health: float = 1.0  # Battery health for degradation (Level 2)
@@ -137,7 +138,7 @@ class BatteryStorageEnv(gym.Env):
 
     def _load_data(self, data_path: str | Path | None) -> None:
         """
-        Load price and load data from .npy files and chunk into episodes.
+        Load price, load, and hour-of-day data from .npy files and chunk into episodes.
 
         The raw data is a flat 1D timeseries. This method chunks it into
         episodes of length self.episode_length, discarding any leftover hours
@@ -146,6 +147,7 @@ class BatteryStorageEnv(gym.Env):
         Sets:
             self.prices: Shape (n_episodes, episode_length) - chunked price data
             self.loads: Shape (n_episodes, episode_length) - chunked load data
+            self.hours_of_day: Shape (n_episodes, episode_length) - hour of day (0-23)
             self.n_episodes: Number of complete episodes available
             self.price_max: Maximum price for normalization
             self.load_max: Maximum load for normalization
@@ -158,11 +160,13 @@ class BatteryStorageEnv(gym.Env):
 
         prices_raw = np.load(data_path / "prices.npy").flatten()
         loads_raw = np.load(data_path / "loads.npy").flatten()
+        hours_raw = np.load(data_path / "hours_of_day.npy").flatten()
 
         # Chunk into episodes, discarding incomplete trailing hours
         n_usable = (len(prices_raw) // self.episode_length) * self.episode_length
         self.prices = prices_raw[:n_usable].reshape(-1, self.episode_length)
         self.loads = loads_raw[:n_usable].reshape(-1, self.episode_length)
+        self.hours_of_day = hours_raw[:n_usable].reshape(-1, self.episode_length)
         self.n_episodes = self.prices.shape[0]
 
         # Compute normalization constants from usable data only
@@ -177,13 +181,14 @@ class BatteryStorageEnv(gym.Env):
             Dictionary with current state information for debugging.
         """
         # Safe index for terminal state (at episode_length -> use last valid index)
-        idx = min(self.current_step, self.episode_length - 1)
+        step_idx = min(self.current_step, self.episode_length - 1)
         return {
             "soc": self.soc,
             "step": self.current_step,
             "episode_idx": self.episode_idx,
-            "price": self._current_prices[idx],
-            "load": self._current_loads[idx],
+            "price": self._current_prices[step_idx],
+            "load": self._current_loads[step_idx],
+            "hour_of_day": int(self._current_hours_of_day[step_idx]),
             "health": self.health,
         }
 
@@ -261,7 +266,7 @@ class BatteryStorageEnv(gym.Env):
 
         The observation should contain:
         1. Normalized state of charge: soc / capacity
-        2. Hour of day: (current_step % 24) / 24.0
+        2. Hour of day: self._current_hours_of_day[current_step] / 24.0
         3. Normalized current price: from _get_forecast(0)
         4. Normalized current load: from _get_forecast(0)
         5. Forecast values: for h in 1..forecast_horizon:
@@ -276,23 +281,32 @@ class BatteryStorageEnv(gym.Env):
             - Use self._get_forecast(h) to get (price, load) tuple for step h
             - self.soc is current state of charge in kWh
             - self.capacity is maximum capacity in kWh
-            - self.current_step % 24 gives hour of day (0-23)
+            - self._current_hours_of_day[self.current_step] gives hour of day (0-23)
             - self.forecast_horizon tells you how many future steps to include
             - Return type must be np.float32 for Gymnasium compatibility
 
         Example structure for forecast_horizon=2:
-            [soc_norm, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
+            [soc_norm, health, hour_norm, price_0, load_0, price_1, load_1, price_2, load_2]
         """
-        # Normalize state of charge and hour of day
+        obs = []
+
+        # state of charge normalized to [0, 1]
         soc_norm = self.soc / self.max_capacity # we have to use max_capacity here to ensure soc_norm is in [0, 1] even as capacity degrades with health, if degradation is enabled in Level 2
+        obs.append(soc_norm)
+
         health = self.health # Include health in observation for Level 2. Already normalized to [0, 1]
-        hour_norm = (self.current_step % 24) / 24.0
-        obs = [soc_norm, health, hour_norm]
+        obs.append(health)
+
+        # hour of day (normalized to [0, 1]) — read from data
+        step_idx = min(self.current_step, self.episode_length - 1) # Safe index for terminal state (at episode_length -> use last valid index)
+        hour_norm = self._current_hours_of_day[step_idx] / 24.0
+        obs.append(hour_norm)
 
         # add current price and load (horizon=0) and future forecasts
         for h in range(self.forecast_horizon + 1):
             price_h, load_h = self._get_forecast(h)
-            obs.extend([price_h, load_h])
+            obs.append(price_h)
+            obs.append(load_h)
 
         return np.array(obs, dtype=np.float32)
 
@@ -308,7 +322,7 @@ class BatteryStorageEnv(gym.Env):
         Steps to implement:
         1. Call super().reset(seed=seed) to handle seeding properly
         2. Select a random episode index from the available range
-        3. Store the episode's price/load data in self._current_prices/loads
+        3. Store the episode's price/load/hours data in self._current_prices/loads/hours_of_day
         4. Initialize self.soc to a random value in [0, capacity]
         5. Reset self.current_step to 0
         6. Reset self.health to 1.0 (for degradation feature)
@@ -335,9 +349,10 @@ class BatteryStorageEnv(gym.Env):
         # select a random episode index from available range
         self.episode_idx = self.np_random.integers(*self._available_episodes)
 
-        # load the prices of the specific episode
+        # load the prices, loads, and hours of the specific episode
         self._current_prices = self.prices[self.episode_idx]
         self._current_loads = self.loads[self.episode_idx]
+        self._current_hours_of_day = self.hours_of_day[self.episode_idx]
 
         # reset capacity to max_capacity in case it was degraded in previous episode (Level 2)
         self.capacity = self.max_capacity
