@@ -85,6 +85,76 @@ def run_episode(
 
     return data, total_reward
 
+def plot_episode_old(data: dict[str, list], title: str = "Episode", xlim=None):
+    """Plot episode data collected by run_episode().
+
+    Creates a 5-panel figure: price, load/grid energy, SoC, actions, and
+    cumulative savings vs. the no-battery baseline.
+
+    Args:
+        data: Dict returned by run_episode().
+        title: Title shown above the top panel.
+        xlim: Optional (start, end) tuple to zoom into a time range.
+
+    Returns:
+        matplotlib Figure (call plt.show() to display).
+    """
+    fig, axes = plt.subplots(5, 1, figsize=(14, 12), sharex=True)
+    hours = np.arange(len(data["price"]))
+
+    # Panel 1: Electricity price
+    axes[0].plot(hours, data["price"], "b-", linewidth=0.8)
+    axes[0].set_ylabel("Price (€/kWh)")
+    axes[0].set_title(title)
+    axes[0].grid(True, alpha=0.3)
+
+    # Panel 2: Household load vs. actual grid energy
+    axes[1].plot(hours, data["load"], "orange", linewidth=0.8, label="Load")
+    axes[1].plot(hours, data["grid_energy"], "red", linewidth=0.8, alpha=0.7, label="Grid Energy")
+    axes[1].axhline(y=0, color="black", linestyle="--", alpha=0.3)
+    axes[1].set_ylabel("Energy (kWh)")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    # Panel 3: Battery state of charge
+    axes[2].plot(hours, data["soc"], "g-", linewidth=0.8)
+    axes[2].axhline(y=10, color="red", linestyle="--", alpha=0.5, label="Capacity")
+    axes[2].set_ylabel("SoC (kWh)")
+    axes[2].set_ylim(0, 11)
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+
+    # Panel 4: Agent actions (green=charge, red=discharge)
+    colors = ["green" if a > 0 else "red" if a < 0 else "gray" for a in data["action"]]
+    axes[3].bar(hours, data["action"], color=colors, alpha=0.7, width=1.0)
+    axes[3].set_ylabel("Action")
+    axes[3].set_ylim(-1.1, 1.1)
+    axes[3].axhline(y=0, color="black", linestyle="-", alpha=0.3)
+    axes[3].grid(True, alpha=0.3)
+
+    # Panel 5: Cumulative savings vs. no-battery baseline
+    baseline_cost = np.cumsum(np.array(data["price"]) * np.array(data["load"]))
+    actual_cost = np.cumsum(-np.array(data["reward"]))
+    savings = baseline_cost - actual_cost
+    axes[4].plot(hours, savings, "g-", linewidth=0.8)
+    axes[4].axhline(y=0, color="black", linestyle="--", alpha=0.3)
+    axes[4].fill_between(hours, 0, savings, where=savings >= 0, alpha=0.2, color="green")
+    axes[4].fill_between(hours, 0, savings, where=savings < 0, alpha=0.2, color="red")
+    axes[4].set_ylabel("Savings (€)")
+    axes[4].set_xlabel("Hour")
+    axes[4].grid(True, alpha=0.3)
+
+    # Day markers on x-axis
+    day_ticks = np.arange(0, len(data["price"]), 24)
+    axes[4].set_xticks(day_ticks)
+    axes[4].set_xticklabels([f"Day {i // 24 + 1}" for i in day_ticks], rotation=45)
+
+    if xlim:
+        for ax in axes:
+            ax.set_xlim(xlim)
+
+    plt.tight_layout()
+    return fig
 
 def plot_episode(data: dict[str, list], title: str = "Episode", xlim=None):
     """Plot episode data collected by run_episode().
