@@ -266,6 +266,41 @@ class BatteryStorageEnv(gym.Env):
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
     # =========================================================================
+
+    def _calculate_reward(
+        self, load: float, charge_power: float, price: float
+    ) -> float:
+        """
+        Calculate the reward for the current step.
+
+        The reward should reflect the cost of electricity from the grid.
+        Grid energy = load + charge_power (charge_power > 0 means charging)
+
+        When charging: we buy extra electricity -> higher cost
+        When discharging: we offset load -> lower cost
+
+        Note: We can't sell back to the grid! If discharge exceeds load,
+        the excess is wasted. Clamp grid_energy to minimum 0.
+
+        Args:
+            load: Current household load in kWh (energy consumed this hour).
+            charge_power: Battery charge power in kW (positive=charging).
+                         Since step is 1 hour, this equals energy in kWh.
+            price: Current electricity price in currency/kWh.
+
+        Returns:
+            float: Negative cost (reward = -cost, so lower cost = higher reward)
+
+        Hints:
+            - grid_energy = load + charge_power
+            - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
+            - cost = grid_energy * price
+            - reward should be negative (we want to minimize cost)
+        """
+        grid_energy = max(load + charge_power, 0)  # Can't sell to grid
+        cost = grid_energy * price
+        return -cost
+
     def _get_obs(self) -> np.ndarray:
         """
         Build the observation array for the current state.
@@ -436,48 +471,21 @@ class BatteryStorageEnv(gym.Env):
         # Level 2: Apply degradation and penalize health damage in reward
         if self.enable_degradation:
             health_damage = self._apply_degradation(charge_power_effective)
-            reward -= self.health_weight * health_damage
+            # reward shaping
+            reward -= self.health_weight * health_damage 
 
         return self._get_obs(), reward, terminated, truncated, self._get_info()
 
-    def _calculate_reward(
-        self, load: float, charge_power: float, price: float
-    ) -> float:
-        """
-        Calculate the reward for the current step.
-
-        The reward should reflect the cost of electricity from the grid.
-        Grid energy = load + charge_power (charge_power > 0 means charging)
-
-        When charging: we buy extra electricity -> higher cost
-        When discharging: we offset load -> lower cost
-
-        Note: We can't sell back to the grid! If discharge exceeds load,
-        the excess is wasted. Clamp grid_energy to minimum 0.
-
-        Args:
-            load: Current household load in kWh (energy consumed this hour).
-            charge_power: Battery charge power in kW (positive=charging).
-                         Since step is 1 hour, this equals energy in kWh.
-            price: Current electricity price in currency/kWh.
-
-        Returns:
-            float: Negative cost (reward = -cost, so lower cost = higher reward)
-
-        Hints:
-            - grid_energy = load + charge_power
-            - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
-            - cost = grid_energy * price
-            - reward should be negative (we want to minimize cost)
-        """
-        grid_energy = max(load + charge_power, 0)  # Can't sell to grid
-        cost = grid_energy * price
-        return -cost
-
     def render(self) -> None:
-        """Render the environment (not implemented)."""
+        """Render the environment. Not needed for our environment since we
+        visualize episodes after the fact using plot_episode(). Environments
+        with real-time visualization (e.g. Atari, MuJoCo) would open a
+        pygame/OpenGL window here."""
         pass
 
     def close(self) -> None:
-        """Clean up resources (not implemented)."""
+        """Clean up resources. Not needed for our environment since all data
+        is loaded into numpy arrays in memory. Environments that manage
+        external resources (rendering windows, subprocesses, network
+        connections) would release them here."""
         pass

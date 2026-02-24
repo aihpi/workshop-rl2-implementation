@@ -266,6 +266,38 @@ class BatteryStorageEnv(gym.Env):
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
     # =========================================================================
+    def _calculate_reward(
+        self, load: float, charge_power: float, price: float
+    ) -> float:
+        """
+        Calculate the reward for the current step.
+
+        The reward should reflect the cost of electricity from the grid.
+        Grid energy = load + charge_power (charge_power > 0 means charging)
+
+        When charging: we buy extra electricity -> higher cost
+        When discharging: we offset load -> lower cost
+
+        Note: We can't sell back to the grid! If discharge exceeds load,
+        the excess is wasted. Clamp grid_energy to minimum 0.
+
+        Args:
+            load: Current household load in kWh (energy consumed this hour).
+            charge_power: Battery charge power in kW (positive=charging).
+                         Since step is 1 hour, this equals energy in kWh.
+            price: Current electricity price in currency/kWh.
+
+        Returns:
+            float: Negative cost (reward = -cost, so lower cost = higher reward)
+
+        Hints:
+            - grid_energy = load + charge_power
+            - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
+            - cost = grid_energy * price
+            - reward should be negative (we want to minimize cost)
+        """
+        raise NotImplementedError("Implement this method")
+
     def _get_obs(self) -> np.ndarray:
         """
         Build the observation array for the current state.
@@ -373,43 +405,3 @@ class BatteryStorageEnv(gym.Env):
             - Penalize health damage: reward -= self.health_weight * health_damage
         """
         raise NotImplementedError("Implement this method")
-
-    def _calculate_reward(
-        self, load: float, charge_power: float, price: float
-    ) -> float:
-        """
-        Calculate the reward for the current step.
-
-        The reward should reflect the cost of electricity from the grid.
-        Grid energy = load + charge_power (charge_power > 0 means charging)
-
-        When charging: we buy extra electricity -> higher cost
-        When discharging: we offset load -> lower cost
-
-        Note: We can't sell back to the grid! If discharge exceeds load,
-        the excess is wasted. Clamp grid_energy to minimum 0.
-
-        Args:
-            load: Current household load in kWh (energy consumed this hour).
-            charge_power: Battery charge power in kW (positive=charging).
-                         Since step is 1 hour, this equals energy in kWh.
-            price: Current electricity price in currency/kWh.
-
-        Returns:
-            float: Negative cost (reward = -cost, so lower cost = higher reward)
-
-        Hints:
-            - grid_energy = load + charge_power
-            - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
-            - cost = grid_energy * price
-            - reward should be negative (we want to minimize cost)
-        """
-        raise NotImplementedError("Implement this method")
-
-    def render(self) -> None:
-        """Render the environment (not implemented)."""
-        pass
-
-    def close(self) -> None:
-        """Clean up resources (not implemented)."""
-        pass
