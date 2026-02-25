@@ -85,7 +85,7 @@ def run_episode(
 
         # Calculate actual grid energy from SoC change
         actual_charge_power = env.soc - old_soc
-        grid_energy = max(0.0, load + actual_charge_power)
+        grid_energy = max(0.0, load + actual_charge_power) # excess discharge cannot be sold back to grid, so it's wasted
 
         # Store data
         data["action"].append(float(action[0]))

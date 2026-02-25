@@ -266,6 +266,7 @@ class BatteryStorageEnv(gym.Env):
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
     # =========================================================================
+
     def _calculate_reward(
         self, load: float, charge_power: float, price: float
     ) -> float:
@@ -288,13 +289,11 @@ class BatteryStorageEnv(gym.Env):
             price: Current electricity price in currency/kWh.
 
         Returns:
-            float: Negative cost (reward = -cost, so lower cost = higher reward)
+            float: reward for this step
 
         Hints:
-            - grid_energy = load + charge_power
             - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
-            - cost = grid_energy * price
-            - reward should be negative (we want to minimize cost)
+            - we want to minimize costs, but maximize rewards
         """
         raise NotImplementedError("Implement this method")
 
@@ -302,10 +301,10 @@ class BatteryStorageEnv(gym.Env):
         """
         Build the observation array for the current state.
 
-        The observation should contain:
-        1. Normalized state of charge: soc / max_capacity
-        2. Battery health: self.health (already in [0, 1])
-        3. Hour of day: self._current_hours_of_day[current_step] / 24.0
+        The observation should contain normalized values:
+        1. Normalized state of charge
+        2. Battery health: self.health (already normalized)
+        3. Normalized hour of day
         4. Normalized current price: from _get_forecast(0)
         5. Normalized current load: from _get_forecast(0)
         6. Forecast values: for h in 1..forecast_horizon:
@@ -315,12 +314,13 @@ class BatteryStorageEnv(gym.Env):
         Returns:
             np.ndarray: Observation array of shape (5 + 2*forecast_horizon,)
                        with dtype float32, all values in [0, 1]
+            The first entry should be the normalized state of charge (self.soc / self.max_capacity) to pass the tests in notebook 02_implement_environment.ipynb
 
         Hints:
-            - Use self._get_forecast(h) to get (price, load) tuple for step h
             - Use self.max_capacity (not self.capacity) to normalize soc,
-              so that soc_norm stays in [0, 1] even as capacity degrades
+              so that soc_norm stays in [0, 1] even as capacity degrades. 
             - self._current_hours_of_day[self.current_step] gives hour of day (0-23)
+            - Use self._get_forecast(h) to get (price, load) tuple for step h
             - self.forecast_horizon tells you how many future steps to include
             - Return type must be np.float32 for Gymnasium compatibility
 
@@ -339,7 +339,7 @@ class BatteryStorageEnv(gym.Env):
         Reset the environment to start a new episode.
 
         Steps to implement:
-        1. Call super().reset(seed=seed) to handle seeding properly
+        1. IMPORTANT: Call super().reset(seed=seed) to handle seeding properly.
         2. Select a random episode index from the available range
         3. Store the episode's price/load/hours/days data in self._current_prices/loads/hours_of_day/days_of_week
         4. Reset self.capacity to self.max_capacity (in case it was degraded)

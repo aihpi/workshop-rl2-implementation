@@ -289,13 +289,11 @@ class BatteryStorageEnv(gym.Env):
             price: Current electricity price in currency/kWh.
 
         Returns:
-            float: Negative cost (reward = -cost, so lower cost = higher reward)
+            float: reward for this step
 
         Hints:
-            - grid_energy = load + charge_power
             - grid_energy = max(grid_energy, 0)  # Can't sell to grid!
-            - cost = grid_energy * price
-            - reward should be negative (we want to minimize cost)
+            - we want to minimize costs, but maximize rewards
         """
         grid_energy = max(load + charge_power, 0)  # Can't sell to grid
         cost = grid_energy * price
@@ -363,7 +361,7 @@ class BatteryStorageEnv(gym.Env):
         Steps to implement:
         1. Call super().reset(seed=seed) to handle seeding properly
         2. Select a random episode index from the available range
-        3. Store the episode's price/load/hours data in self._current_prices/loads/hours_of_day
+        3. Store the episode's price/load/hours data in self._current_prices/loads/hours_of_day/days_of_week
         4. Initialize self.soc to a random value in [0, capacity]
         5. Reset self.current_step to 0
         6. Reset self.health to 1.0 (for degradation feature)
@@ -451,6 +449,7 @@ class BatteryStorageEnv(gym.Env):
         """
         action = action[0]  # extract scalar value of action array
         charge_power = action * self.max_charge_rate
+        # apply SOC constraints
         new_soc = np.clip(self.soc + charge_power, 0, self.capacity)
 
         # current price and load
@@ -460,6 +459,7 @@ class BatteryStorageEnv(gym.Env):
         # calculate effective power
         charge_power_effective = new_soc - self.soc
 
+        # calculate reward
         reward = self._calculate_reward(current_load, charge_power_effective, current_price)
 
         # increment current step and update soc
