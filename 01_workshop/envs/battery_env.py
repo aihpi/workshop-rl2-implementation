@@ -266,6 +266,7 @@ class BatteryStorageEnv(gym.Env):
     # =========================================================================
     # METHODS FOR PARTICIPANTS TO IMPLEMENT
     # =========================================================================
+
     def _calculate_reward(
         self, load: float, charge_power: float, price: float
     ) -> float:
@@ -338,7 +339,7 @@ class BatteryStorageEnv(gym.Env):
         Reset the environment to start a new episode.
 
         Steps to implement:
-        1. Call super().reset(seed=seed) to handle seeding properly
+        1. IMPORTANT: Call super().reset(seed=seed) to handle seeding properly.
         2. Select a random episode index from the available range
         3. Store the episode's price/load/hours/days data in self._current_prices/loads/hours_of_day/days_of_week
         4. Reset self.capacity to self.max_capacity (in case it was degraded)
