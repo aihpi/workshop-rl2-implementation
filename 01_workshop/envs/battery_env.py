@@ -375,14 +375,14 @@ class BatteryStorageEnv(gym.Env):
         1. Extract action value from action array
         2. Convert action to charge power: power = action * max_charge_rate
         3. Compute new_soc by clipping soc + power to [0, capacity]
-        4. Get current price and load from episode data
-        5. Compute effective charge power (new_soc - soc), which accounts
+        4. Compute effective charge power (new_soc - soc), which accounts
            for battery constraints (can't charge above capacity or below 0)
+        5. Get current price and load from episode data
         6. Calculate reward using self._calculate_reward()
         7. Update self.soc to new_soc
         8. Increment current_step
         9. Check if episode is done (current_step >= episode_length)
-        10. If degradation is enabled, apply it and penalize health damage
+        10. If degradation is enabled, apply it
 
         Args:
             action: Action array of shape (1,) with value in [-1, 1]
@@ -404,4 +404,5 @@ class BatteryStorageEnv(gym.Env):
             - self._apply_degradation(power) returns health_damage (float)
             - Penalize health damage: reward -= self.health_weight * health_damage
         """
+
         raise NotImplementedError("Implement this method")

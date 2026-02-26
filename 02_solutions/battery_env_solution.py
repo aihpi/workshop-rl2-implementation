@@ -452,12 +452,12 @@ class BatteryStorageEnv(gym.Env):
         # apply SOC constraints
         new_soc = np.clip(self.soc + charge_power, 0, self.capacity)
 
+        # calculate effective power
+        charge_power_effective = new_soc - self.soc
+        
         # current price and load
         current_price = self._current_prices[self.current_step]
         current_load = self._current_loads[self.current_step]
-
-        # calculate effective power
-        charge_power_effective = new_soc - self.soc
 
         # calculate reward
         reward = self._calculate_reward(current_load, charge_power_effective, current_price)
